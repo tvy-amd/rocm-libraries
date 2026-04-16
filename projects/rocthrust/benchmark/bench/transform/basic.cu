@@ -32,6 +32,7 @@
 // rocThrust
 #include <thrust/copy.h>
 #include <thrust/count.h>
+#include <thrust/detail/config/namespace.h>
 #include <thrust/detail/libcxx_wrapper/__functional/address_stability.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
@@ -280,7 +281,7 @@ void run_babelstream(benchmark::State& state, const std::size_t n)
     b = thrust::device_vector<T>(n);
     c = thrust::device_vector<T>(n);
   }
-  catch (const ::thrust::system::detail::bad_alloc& e)
+  catch (const THRUST_NS_QUALIFIER::system::detail::bad_alloc& e)
   {
     (void) hipGetLastError();
     state.SkipWithError(("thrust::system::detail::bad_alloc: " + std::string(e.what())).c_str());
@@ -299,7 +300,7 @@ void run_babelstream(benchmark::State& state, const std::size_t n)
     {
       duration = Benchmark::template run<T>(a, b, c);
     }
-    catch (const ::thrust::system::detail::bad_alloc& e)
+    catch (const THRUST_NS_QUALIFIER::system::detail::bad_alloc& e)
     {
       (void) hipGetLastError();
       state.SkipWithError(("thrust::system::detail::bad_alloc: " + std::string(e.what())).c_str());
