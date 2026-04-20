@@ -2,6 +2,12 @@
 
 Full documentation for hipCUB is available at [https://rocm.docs.amd.com/projects/hipCUB/en/latest/](https://rocm.docs.amd.com/projects/hipCUB/en/latest/).
 
+## hipCUB-x.x.x for ROCm 8.1
+
+### Added
+
+* Added support for large number of segments and large number of items to `hipcub::DeviceSegmentedRadixSort::*`.
+
 ## hipCUB-5.0.0 for ROCm 8.0
 
 ### Added
