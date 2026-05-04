@@ -681,6 +681,32 @@ inline bool is_apu(const rocprim::detail::target_arch arch)
     return false;
 }
 
+template<typename offset_type, typename segment_index_type>
+struct segments_index_to_offset_op
+{
+    segment_index_type empty_segments_count;
+    segment_index_type segments_count;
+    offset_type        segment_length;
+    offset_type        size;
+
+    ROCPRIM_HOST_DEVICE ROCPRIM_INLINE
+    offset_type        operator()(segment_index_type i) const
+    {
+        if(i < empty_segments_count)
+        {
+            return 0;
+        }
+        else if(i < segments_count)
+        {
+            return segment_length * static_cast<offset_type>(i - empty_segments_count);
+        }
+        else
+        {
+            return size;
+        }
+    }
+};
+
 } // namespace test_utils
 
 #endif // TEST_TEST_UTILS_HPP_
