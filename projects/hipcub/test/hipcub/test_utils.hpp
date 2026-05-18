@@ -40,6 +40,7 @@
     #include <cuda/std/array>
     #include <cuda/std/mdspan>
     #include <hipcub/hipcub.hpp>
+    #include <thrust/iterator/zip_iterator.h>
 #endif
 
 #include <hipcub/util_type.hpp>
@@ -656,6 +657,18 @@ using counting_iterator = ::rocprim::counting_iterator<T>;
 template<typename It, typename UnaryOp, typename ValueType = ::hipcub::detail::it_value_t<It>>
 using transform_iterator = ::rocprim::transform_iterator<It, UnaryOp, ValueType>;
 
+template<typename IteratorTuple>
+using zip_iterator = ::rocprim::zip_iterator<IteratorTuple>;
+
+template<class... Types>
+using tuple = ::rocprim::tuple<Types...>;
+
+template<typename... Types>
+auto make_tuple(Types&&... args) -> tuple<Types...>
+{
+    return ::rocprim::make_tuple<Types...>(::rocprim::detail::custom_forward<Types>(args)...);
+}
+
 struct discard_iterator : public ::rocprim::discard_iterator
 {
     using base_type         = ::rocprim::discard_iterator;
@@ -697,6 +710,18 @@ using counting_iterator = ::cub::CountingInputIterator<T>;
 
 template<typename It, typename UnaryOp, typename ValueType = ::hipcub::detail::it_value_t<It>>
 using transform_iterator = ::cub::TransformInputIterator<ValueType, UnaryOp, It>;
+
+template<typename IteratorTuple>
+using zip_iterator = ::thrust::zip_iterator<IteratorTuple>;
+
+template<class... Ts>
+using tuple = ::cuda::std::tuple<Ts...>;
+
+template<typename... Types>
+auto make_tuple(Types&&... args) -> tuple<Types...>
+{
+    return ::cuda::std::make_tuple(args...);
+}
 
 template<typename T = void>
 using discard_iterator = ::cub::DiscardOutputIterator<T>;
