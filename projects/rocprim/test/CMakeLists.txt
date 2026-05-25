@@ -1,6 +1,6 @@
 # MIT License
 #
-# Copyright (c) 2017-2025 Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (c) 2017-2026 Advanced Micro Devices, Inc. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -163,6 +163,9 @@ endif()
 # Build the executable used for generating the resource spec file.
 add_executable(generate_resource_spec ${CMAKE_SOURCE_DIR}/test/generate_resource_spec.cpp)
 set_target_properties(generate_resource_spec PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+# Resource spec test does not generate device code, therefore --offload-compress is not used during
+# compilation and it triggers an error ("argument unused during compilation"). Ignore this error
+target_compile_options(generate_resource_spec PRIVATE -Wno-unused-command-line-argument)
 target_link_libraries(generate_resource_spec PRIVATE hip::host)
 
 # Install the executable using the standard install command instead of rocm_install
