@@ -314,6 +314,14 @@
           "sha256": "d4e20421032922c0cdd0b88c1339758e1341de8897e8e4a54d119498b5a1119e",
           "status": "ok"
         },
+        "grouped_gemm/gfx950/m8192n1024k512e64": {
+          "arch": "gfx950",
+          "bytes": 269454,
+          "family": "grouped_gemm",
+          "kernel_name": "irhash_grouped_gemm_950",
+          "sha256": "048ef7377a4860cb0c8998c46455a39d2b20b42d195ca5e51153fdbfc4b7fec4",
+          "status": "ok"
+        },
         "moe_sort/gfx1151/hist_t32_k2_e8": {
           "arch": "gfx1151",
           "bytes": 3011,
@@ -372,7 +380,7 @@
           "gfx1250": 2,
           "gfx90a": 4,
           "gfx942": 5,
-          "gfx950": 18
+          "gfx950": 19
         },
         "expected_failures": 0,
         "families": {
@@ -380,9 +388,10 @@
           "conv_wgrad": 7,
           "deep_fused_conv": 9,
           "gemm": 13,
+          "grouped_gemm": 1,
           "moe": 9
         },
-        "ok_cases": 45
+        "ok_cases": 46
       }
     },
     "llvm22": {
@@ -699,6 +708,14 @@
           "sha256": "ced09f4c5197ce52efae8ee3ee70e93ca0f5d6d927cd786a0bb3246191492df6",
           "status": "ok"
         },
+        "grouped_gemm/gfx950/m8192n1024k512e64": {
+          "arch": "gfx950",
+          "bytes": 269550,
+          "family": "grouped_gemm",
+          "kernel_name": "irhash_grouped_gemm_950",
+          "sha256": "2740ea6b5753693ef689b05cea1be4cb72fac9fa599fdf01b9a9264dfe2bba3b",
+          "status": "ok"
+        },
         "moe_sort/gfx1151/hist_t32_k2_e8": {
           "arch": "gfx1151",
           "bytes": 3018,
@@ -757,7 +774,7 @@
           "gfx1250": 2,
           "gfx90a": 4,
           "gfx942": 5,
-          "gfx950": 18
+          "gfx950": 19
         },
         "expected_failures": 0,
         "families": {
@@ -765,9 +782,10 @@
           "conv_wgrad": 7,
           "deep_fused_conv": 9,
           "gemm": 13,
+          "grouped_gemm": 1,
           "moe": 9
         },
-        "ok_cases": 45
+        "ok_cases": 46
       }
     }
   },
