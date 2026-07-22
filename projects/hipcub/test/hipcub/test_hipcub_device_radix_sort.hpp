@@ -263,7 +263,7 @@ void sort_keys()
             std::vector<key_type> expected;
             try
             {
-                expected.assign(keys_input.begin(), keys_input.end());
+                expected = keys_input;
             }
             catch(const std::bad_alloc& e)
             {
@@ -838,7 +838,7 @@ void sort_keys_double_buffer()
             std::vector<key_type> expected;
             try
             {
-                expected.assign(keys_input.begin(), keys_input.end());
+                expected = keys_input;
             }
             catch(const std::bad_alloc& e)
             {
