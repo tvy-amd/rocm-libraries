@@ -1396,9 +1396,9 @@ void benchmark_RPP_HIP_Resize(const vector<Mat>& imgs, bool isColor, int dstW, i
 
     RpptImagePatch *dstImgSizes;
     RpptROI *roiTensor;
-
     CHECK_HIP_STATUS(hipHostMalloc(&dstImgSizes, num_images * sizeof(RpptImagePatch)));
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
 
     for (int i = 0; i < num_images; ++i) {
         RpptLayout layout = (isColor && imgs[i].channels() == 3) ? RpptLayout::NHWC : RpptLayout::NCHW;
@@ -1415,10 +1415,11 @@ void benchmark_RPP_HIP_Resize(const vector<Mat>& imgs, bool isColor, int dstW, i
         dstImgSizes[i].width = dstW;
         dstImgSizes[i].height = dstH;
 
-        roiTensor[i].xywhROI.xy.x = 0;
-        roiTensor[i].xywhROI.xy.y = 0;
-        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
-        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = 0;
+        roiTensor[i * 256].xywhROI.xy.y = 0;
+        roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
 
         size_t srcAlignedBufferSize = srcDescs[i].n * srcDescs[i].h * srcDescs[i].w * srcDescs[i].c * sizeof(Rpp8u);
         size_t dstAlignedBufferSize = dstDescs[i].n * dstDescs[i].h * dstDescs[i].w * dstDescs[i].c * sizeof(Rpp8u);
@@ -1444,8 +1445,9 @@ void benchmark_RPP_HIP_Resize(const vector<Mat>& imgs, bool isColor, int dstW, i
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
         for (int i = 0; i < num_images; ++i) {
+            // Pass pointer to the i-th 256-element ROI block
             CHECK_RPP_STATUS(rppt_resize(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],
-                                        &dstImgSizes[i], interpType, &roiTensor[i], RpptRoiType::XYWH,
+                                        &dstImgSizes[i], interpType, &roiTensor[i * 256], RpptRoiType::XYWH,
                                         handle, RPP_HIP_BACKEND),
                             "Resize");
         }
@@ -1483,7 +1485,8 @@ void benchmark_RPP_HIP_Flip(const vector<Mat>& imgs, bool isColor, int flipCode,
     RpptROI *roiTensor;
     CHECK_HIP_STATUS(hipHostMalloc(&horizontalTensor, num_images * sizeof(Rpp32u)));
     CHECK_HIP_STATUS(hipHostMalloc(&verticalTensor, num_images * sizeof(Rpp32u)));
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
 
     for (int i = 0; i < num_images; ++i) {
         RpptLayout layout = (isColor && imgs[i].channels() == 3) ? RpptLayout::NHWC : RpptLayout::NCHW;
@@ -1495,90 +1498,11 @@ void benchmark_RPP_HIP_Flip(const vector<Mat>& imgs, bool isColor, int flipCode,
 
         horizontalTensor[i] = horizontalFlag;
         verticalTensor[i] = verticalFlag;
-        roiTensor[i].xywhROI.xy.x = 0;
-        roiTensor[i].xywhROI.xy.y = 0;
-        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
-        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
-
-        // Calculate buffer size based on aligned descriptor dimensions (not original image size)
-        size_t alignedBufferSize = srcDescs[i].n * srcDescs[i].h * srcDescs[i].w * srcDescs[i].c * sizeof(Rpp8u);
-
-        CHECK_HIP_STATUS(hipMalloc(&d_inputs[i], alignedBufferSize));
-        CHECK_HIP_STATUS(hipMalloc(&d_outputs[i], alignedBufferSize));
-
-        // Copy image data line by line to account for width alignment
-        // Source has original width, destination has aligned width
-        Rpp8u* h_tempBuffer = new Rpp8u[alignedBufferSize]();  // Zero-initialized
-        int originalWidth = imgs[i].cols;
-        int alignedWidth = srcDescs[i].w;
-        int elementsPerRow = originalWidth * numChannels;
-
-        for (int row = 0; row < imgs[i].rows; ++row) {
-            memcpy(h_tempBuffer + row * alignedWidth * numChannels,
-                   imgs[i].data + row * elementsPerRow,
-                   elementsPerRow * sizeof(Rpp8u));
-        }
-
-        CHECK_HIP_STATUS(hipMemcpy(d_inputs[i], h_tempBuffer, alignedBufferSize, hipMemcpyHostToDevice));
-        delete[] h_tempBuffer;
-    }
-
-    // NOTE: rppt_flip has a bug causing memory corruption on repeated calls
-    // Run only once to get a valid measurement, then multiply time by NUM_RUNS for fair comparison
-    auto start = high_resolution_clock::now();
-    for (int i = 0; i < num_images; ++i) {
-        CHECK_RPP_STATUS(rppt_flip(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],
-                                  &horizontalTensor[i], &verticalTensor[i],
-                                  &roiTensor[i], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
-                        "Flip");
-    }
-    CHECK_HIP_STATUS(hipStreamSynchronize(stream));
-    auto end = high_resolution_clock::now();
-
-    // Multiply by NUM_RUNS to normalize with other benchmarks
-    double singleRunTime = duration<double, milli>(end - start).count();
-    double adjustedTime = singleRunTime * NUM_RUNS;
-
-    for (int i = 0; i < num_images; ++i) {
-        CHECK_HIP_STATUS(hipFree(d_inputs[i]));
-        CHECK_HIP_STATUS(hipFree(d_outputs[i]));
-    }
-    CHECK_HIP_STATUS(hipHostFree(horizontalTensor));
-    CHECK_HIP_STATUS(hipHostFree(verticalTensor));
-    CHECK_HIP_STATUS(hipHostFree(roiTensor));
-
-    string name = (flipCode == 1) ? "Horizontal" : (flipCode == 0) ? "Vertical" : "Both";
-    printResult("RPP HIP Flip", imgs.size(), isColor, adjustedTime, "type=" + name);
-}
-
-void benchmark_RPP_HIP_Rotate(const vector<Mat>& imgs, bool isColor, float angleDeg,
-                             rppHandle_t handle, hipStream_t stream) {
-    int num_images = (int)imgs.size();
-    int numChannels = isColor ? 3 : 1;
-
-    vector<RpptDesc> srcDescs(num_images);
-    vector<RpptDesc> dstDescs(num_images);
-    vector<Rpp8u*> d_inputs(num_images);
-    vector<Rpp8u*> d_outputs(num_images);
-
-    Rpp32f *angleTensor;
-    RpptROI *roiTensor;
-    CHECK_HIP_STATUS(hipHostMalloc(&angleTensor, num_images * sizeof(Rpp32f)));
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
-
-    for (int i = 0; i < num_images; ++i) {
-        RpptLayout layout = (isColor && imgs[i].channels() == 3) ? RpptLayout::NHWC : RpptLayout::NCHW;
-        set_descriptor_dims_and_strides_local(&srcDescs[i], 1, imgs[i].rows, imgs[i].cols, numChannels, 0);
-        srcDescs[i].layout = layout;
-        srcDescs[i].dataType = RpptDataType::U8;
-        update_strides_from_layout(&srcDescs[i]);
-        dstDescs[i] = srcDescs[i];
-
-        angleTensor[i] = angleDeg;
-        roiTensor[i].xywhROI.xy.x = 0;
-        roiTensor[i].xywhROI.xy.y = 0;
-        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
-        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = 0;
+        roiTensor[i * 256].xywhROI.xy.y = 0;
+        roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
 
         // Calculate buffer size based on aligned descriptor dimensions (not original image size)
         size_t alignedBufferSize = srcDescs[i].n * srcDescs[i].h * srcDescs[i].w * srcDescs[i].c * sizeof(Rpp8u);
@@ -1606,9 +1530,90 @@ void benchmark_RPP_HIP_Rotate(const vector<Mat>& imgs, bool isColor, float angle
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
         for (int i = 0; i < num_images; ++i) {
+            // Pass pointer to the i-th 256-element ROI block
+            CHECK_RPP_STATUS(rppt_flip(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],
+                                      &horizontalTensor[i], &verticalTensor[i],
+                                      &roiTensor[i * 256], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
+                            "Flip");
+        }
+    }
+    CHECK_HIP_STATUS(hipStreamSynchronize(stream));
+    auto end = high_resolution_clock::now();
+
+    for (int i = 0; i < num_images; ++i) {
+        CHECK_HIP_STATUS(hipFree(d_inputs[i]));
+        CHECK_HIP_STATUS(hipFree(d_outputs[i]));
+    }
+    CHECK_HIP_STATUS(hipHostFree(horizontalTensor));
+    CHECK_HIP_STATUS(hipHostFree(verticalTensor));
+    CHECK_HIP_STATUS(hipHostFree(roiTensor));
+
+    string name = (flipCode == 1) ? "Horizontal" : (flipCode == 0) ? "Vertical" : "Both";
+    printResult("RPP HIP Flip", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "type=" + name);
+}
+
+void benchmark_RPP_HIP_Rotate(const vector<Mat>& imgs, bool isColor, float angleDeg,
+                             rppHandle_t handle, hipStream_t stream) {
+    int num_images = (int)imgs.size();
+    int numChannels = isColor ? 3 : 1;
+
+    vector<RpptDesc> srcDescs(num_images);
+    vector<RpptDesc> dstDescs(num_images);
+    vector<Rpp8u*> d_inputs(num_images);
+    vector<Rpp8u*> d_outputs(num_images);
+
+    Rpp32f *angleTensor;
+    RpptROI *roiTensor;
+    CHECK_HIP_STATUS(hipHostMalloc(&angleTensor, num_images * sizeof(Rpp32f)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
+
+    for (int i = 0; i < num_images; ++i) {
+        RpptLayout layout = (isColor && imgs[i].channels() == 3) ? RpptLayout::NHWC : RpptLayout::NCHW;
+        set_descriptor_dims_and_strides_local(&srcDescs[i], 1, imgs[i].rows, imgs[i].cols, numChannels, 0);
+        srcDescs[i].layout = layout;
+        srcDescs[i].dataType = RpptDataType::U8;
+        update_strides_from_layout(&srcDescs[i]);
+        dstDescs[i] = srcDescs[i];
+
+        angleTensor[i] = angleDeg;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = 0;
+        roiTensor[i * 256].xywhROI.xy.y = 0;
+        roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
+
+        // Calculate buffer size based on aligned descriptor dimensions (not original image size)
+        size_t alignedBufferSize = srcDescs[i].n * srcDescs[i].h * srcDescs[i].w * srcDescs[i].c * sizeof(Rpp8u);
+
+        CHECK_HIP_STATUS(hipMalloc(&d_inputs[i], alignedBufferSize));
+        CHECK_HIP_STATUS(hipMalloc(&d_outputs[i], alignedBufferSize));
+
+        // Copy image data line by line to account for width alignment
+        // Source has original width, destination has aligned width
+        Rpp8u* h_tempBuffer = new Rpp8u[alignedBufferSize]();  // Zero-initialized
+        int originalWidth = imgs[i].cols;
+        int alignedWidth = srcDescs[i].w;
+        int elementsPerRow = originalWidth * numChannels;
+
+        for (int row = 0; row < imgs[i].rows; ++row) {
+            memcpy(h_tempBuffer + row * alignedWidth * numChannels,
+                   imgs[i].data + row * elementsPerRow,
+                   elementsPerRow * sizeof(Rpp8u));
+        }
+
+        CHECK_HIP_STATUS(hipMemcpy(d_inputs[i], h_tempBuffer, alignedBufferSize, hipMemcpyHostToDevice));
+        delete[] h_tempBuffer;
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; ++k) {
+        for (int i = 0; i < num_images; ++i) {
+            // Pass pointer to the i-th 256-element ROI block
             CHECK_RPP_STATUS(rppt_rotate(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],
                                         &angleTensor[i], RpptInterpolationType::BILINEAR,
-                                        &roiTensor[i], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
+                                        &roiTensor[i * 256], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
                             "Rotate");
         }
     }
@@ -1640,7 +1645,8 @@ void benchmark_RPP_HIP_WarpAffine(const vector<Mat>& imgs, bool isColor, rppHand
     float *affineTensor;
     RpptROI *roiTensor;
     CHECK_HIP_STATUS(hipHostMalloc(&affineTensor, num_images * 6 * sizeof(float)));
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
 
     // Affine transformation matrix: [a11, a12, a13, a21, a22, a23]
     // Same transformation for all images
@@ -1657,10 +1663,11 @@ void benchmark_RPP_HIP_WarpAffine(const vector<Mat>& imgs, bool isColor, rppHand
         // Copy affine matrix for this image
         memcpy(&affineTensor[i * 6], affine, 6 * sizeof(float));
 
-        roiTensor[i].xywhROI.xy.x = 0;
-        roiTensor[i].xywhROI.xy.y = 0;
-        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
-        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = 0;
+        roiTensor[i * 256].xywhROI.xy.y = 0;
+        roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
 
         // Calculate buffer size based on aligned descriptor dimensions
         size_t alignedBufferSize = srcDescs[i].n * srcDescs[i].h * srcDescs[i].w * srcDescs[i].c * sizeof(Rpp8u);
@@ -1688,9 +1695,10 @@ void benchmark_RPP_HIP_WarpAffine(const vector<Mat>& imgs, bool isColor, rppHand
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
         for (int i = 0; i < num_images; ++i) {
+            // Pass pointer to the i-th 256-element ROI block
             CHECK_RPP_STATUS(rppt_warp_affine(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],
                                              &affineTensor[i * 6], RpptInterpolationType::BILINEAR,
-                                             &roiTensor[i], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
+                                             &roiTensor[i * 256], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
                             "WarpAffine");
         }
     }
@@ -1720,7 +1728,8 @@ void benchmark_RPP_HIP_WarpPerspective(const vector<Mat>& imgs, bool isColor, rp
     float *perspectiveTensor;
     RpptROI *roiTensor;
     CHECK_HIP_STATUS(hipHostMalloc(&perspectiveTensor, num_images * 9 * sizeof(float)));
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
 
     // Perspective transformation matrix: 3x3 homography matrix
     // Same transformation for all images
@@ -1737,10 +1746,11 @@ void benchmark_RPP_HIP_WarpPerspective(const vector<Mat>& imgs, bool isColor, rp
         // Copy perspective matrix for this image
         memcpy(&perspectiveTensor[i * 9], perspectiveMatrix, 9 * sizeof(float));
 
-        roiTensor[i].xywhROI.xy.x = 0;
-        roiTensor[i].xywhROI.xy.y = 0;
-        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
-        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = 0;
+        roiTensor[i * 256].xywhROI.xy.y = 0;
+        roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
 
         // Calculate buffer size based on aligned descriptor dimensions
         size_t alignedBufferSize = srcDescs[i].n * srcDescs[i].h * srcDescs[i].w * srcDescs[i].c * sizeof(Rpp8u);
@@ -1767,9 +1777,10 @@ void benchmark_RPP_HIP_WarpPerspective(const vector<Mat>& imgs, bool isColor, rp
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
         for (int i = 0; i < num_images; ++i) {
+            // Pass pointer to the i-th 256-element ROI block
             CHECK_RPP_STATUS(rppt_warp_perspective(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],
                                                    &perspectiveTensor[i * 9], RpptInterpolationType::BILINEAR,
-                                                   &roiTensor[i], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
+                                                   &roiTensor[i * 256], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
                             "WarpPerspective");
         }
     }
@@ -1797,7 +1808,8 @@ void benchmark_RPP_HIP_Fisheye(const vector<Mat>& imgs, bool isColor, rppHandle_
     vector<Rpp8u*> d_outputs(num_images);
 
     RpptROI *roiTensor;
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
 
     for (int i = 0; i < num_images; ++i) {
         RpptLayout layout = (isColor && imgs[i].channels() == 3) ? RpptLayout::NHWC : RpptLayout::NCHW;
@@ -1807,10 +1819,11 @@ void benchmark_RPP_HIP_Fisheye(const vector<Mat>& imgs, bool isColor, rppHandle_
         update_strides_from_layout(&srcDescs[i]);
         dstDescs[i] = srcDescs[i];
 
-        roiTensor[i].xywhROI.xy.x = 0;
-        roiTensor[i].xywhROI.xy.y = 0;
-        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
-        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = 0;
+        roiTensor[i * 256].xywhROI.xy.y = 0;
+        roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
 
         // Calculate buffer size based on aligned descriptor dimensions
         size_t alignedBufferSize = srcDescs[i].n * srcDescs[i].h * srcDescs[i].w * srcDescs[i].c * sizeof(Rpp8u);
@@ -1837,8 +1850,9 @@ void benchmark_RPP_HIP_Fisheye(const vector<Mat>& imgs, bool isColor, rppHandle_
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
         for (int i = 0; i < num_images; ++i) {
+            // Pass pointer to the i-th 256-element ROI block
             CHECK_RPP_STATUS(rppt_fisheye(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],
-                                         &roiTensor[i], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
+                                         &roiTensor[i * 256], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
                             "Fisheye");
         }
     }
@@ -1872,7 +1886,8 @@ void benchmark_RPP_HIP_LensCorrection(const vector<Mat>& imgs, bool isColor, rpp
     RpptROI *roiTensor;
     CHECK_HIP_STATUS(hipHostMalloc(&cameraMatrixTensor, num_images * 9 * sizeof(Rpp32f)));
     CHECK_HIP_STATUS(hipHostMalloc(&distortionCoeffsTensor, num_images * 8 * sizeof(Rpp32f)));
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
 
     // Sample camera calibration parameters
     Rpp32f sampleCameraMatrix[9] = {534.07088364f, 0.0f, 341.53407554f, 0.0f, 534.11914595f, 232.94565259f, 0.0f, 0.0f, 1.0f};
@@ -1903,10 +1918,11 @@ void benchmark_RPP_HIP_LensCorrection(const vector<Mat>& imgs, bool isColor, rpp
         memcpy(&cameraMatrixTensor[i * 9], sampleCameraMatrix, 9 * sizeof(Rpp32f));
         memcpy(&distortionCoeffsTensor[i * 8], sampleDistortion, 8 * sizeof(Rpp32f));
 
-        roiTensor[i].xywhROI.xy.x = 0;
-        roiTensor[i].xywhROI.xy.y = 0;
-        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
-        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = 0;
+        roiTensor[i * 256].xywhROI.xy.y = 0;
+        roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
 
         // Calculate buffer size based on aligned descriptor dimensions
         size_t alignedBufferSize = srcDescs[i].n * srcDescs[i].h * srcDescs[i].w * srcDescs[i].c * sizeof(Rpp8u);
@@ -1933,10 +1949,11 @@ void benchmark_RPP_HIP_LensCorrection(const vector<Mat>& imgs, bool isColor, rpp
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
         for (int i = 0; i < num_images; ++i) {
+            // Pass pointer to the i-th 256-element ROI block
             CHECK_RPP_STATUS(rppt_lens_correction(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],
                                                   d_rowRemapTable, d_colRemapTable, &tableDesc,
                                                   &cameraMatrixTensor[i * 9], &distortionCoeffsTensor[i * 8],
-                                                  &roiTensor[i], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
+                                                  &roiTensor[i * 256], RpptRoiType::XYWH, handle, RPP_HIP_BACKEND),
                             "LensCorrection");
         }
     }
@@ -2974,7 +2991,8 @@ void benchmark_RPP_HIP_Remap(const vector<Mat>& imgs, bool isColor, rppHandle_t 
 
     // Allocate ROI tensor in pinned host memory
     RpptROI *roiTensor;
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
 
     for (int i = 0; i < num_images; ++i) {
         RpptLayout layout = (isColor && imgs[i].channels() == 3) ? RpptLayout::NHWC : RpptLayout::NCHW;
@@ -2990,10 +3008,11 @@ void benchmark_RPP_HIP_Remap(const vector<Mat>& imgs, bool isColor, rppHandle_t 
         tableDescs[i].dataType = RpptDataType::F32;
         update_strides_from_layout(&tableDescs[i]);
 
-        roiTensor[i].xywhROI.xy.x = 0;
-        roiTensor[i].xywhROI.xy.y = 0;
-        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
-        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = 0;
+        roiTensor[i * 256].xywhROI.xy.y = 0;
+        roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
 
         int height = imgs[i].rows;
         int width = imgs[i].cols;
@@ -3045,10 +3064,11 @@ void benchmark_RPP_HIP_Remap(const vector<Mat>& imgs, bool isColor, rppHandle_t 
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
         for (int i = 0; i < num_images; ++i) {
+            // Pass pointer to the i-th 256-element ROI block
             CHECK_RPP_STATUS(rppt_remap(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],
                                        d_rowRemapTable[i], d_colRemapTable[i], &tableDescs[i],
                                        RpptInterpolationType::BILINEAR,
-                                       &roiTensor[i], RpptRoiType::XYWH,
+                                       &roiTensor[i * 256], RpptRoiType::XYWH,
                                        handle, RPP_HIP_BACKEND),
                             "Remap");
         }
@@ -5964,7 +5984,8 @@ void benchmark_RPP_HIP_ResizeMirrorNormalize(const vector<Mat>& imgs, bool isCol
     CHECK_HIP_STATUS(hipHostMalloc(&meanTensor, num_images * numChannels * sizeof(Rpp32f)));
     CHECK_HIP_STATUS(hipHostMalloc(&stdDevTensor, num_images * numChannels * sizeof(Rpp32f)));
     CHECK_HIP_STATUS(hipHostMalloc(&mirrorTensor, num_images * sizeof(Rpp32u)));
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
     CHECK_HIP_STATUS(hipHostMalloc(&dstImgSizes, num_images * sizeof(RpptImagePatch)));
 
     // Target resize dimensions (224x224 common for neural networks)
@@ -5984,11 +6005,11 @@ void benchmark_RPP_HIP_ResizeMirrorNormalize(const vector<Mat>& imgs, bool isCol
         dstDescs[i].dataType = RpptDataType::U8;
         update_strides_from_layout(&dstDescs[i]);
 
-        // Set ROI (full image)
-        roiTensor[i].xywhROI.xy.x = 0;
-        roiTensor[i].xywhROI.xy.y = 0;
-        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
-        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = 0;
+        roiTensor[i * 256].xywhROI.xy.y = 0;
+        roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
 
         // Destination image size
         dstImgSizes[i].width = targetWidth;
@@ -6031,6 +6052,7 @@ void benchmark_RPP_HIP_ResizeMirrorNormalize(const vector<Mat>& imgs, bool isCol
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
         for (int i = 0; i < num_images; ++i) {
+            // Pass pointer to the i-th 256-element ROI block
             CHECK_RPP_STATUS(rppt_resize_mirror_normalize(d_inputs[i], &srcDescs[i],
                                                          d_outputs[i], &dstDescs[i],
                                                          &dstImgSizes[i],
@@ -6038,7 +6060,7 @@ void benchmark_RPP_HIP_ResizeMirrorNormalize(const vector<Mat>& imgs, bool isCol
                                                          meanTensor + i * numChannels,
                                                          stdDevTensor + i * numChannels,
                                                          &mirrorTensor[i],
-                                                         &roiTensor[i], RpptRoiType::XYWH,
+                                                         &roiTensor[i * 256], RpptRoiType::XYWH,
                                                          handle, RPP_HIP_BACKEND),
                             "ResizeMirrorNormalize");
         }
@@ -6076,7 +6098,8 @@ void benchmark_RPP_HIP_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, r
     RpptROI *roiTensor;
     RpptImagePatch *dstImgSizes;
     CHECK_HIP_STATUS(hipHostMalloc(&mirrorTensor, num_images * sizeof(Rpp32u)));
-    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (launches 256 threads without bounds check)
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, num_images * 256 * sizeof(RpptROI)));
     CHECK_HIP_STATUS(hipHostMalloc(&dstImgSizes, num_images * sizeof(RpptImagePatch)));
 
     // Target resize dimensions (224x224 common for neural networks)
@@ -6102,10 +6125,11 @@ void benchmark_RPP_HIP_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, r
         int cropX = (imgs[i].cols - cropWidth) / 2;
         int cropY = (imgs[i].rows - cropHeight) / 2;
 
-        roiTensor[i].xywhROI.xy.x = cropX;
-        roiTensor[i].xywhROI.xy.y = cropY;
-        roiTensor[i].xywhROI.roiWidth = cropWidth;
-        roiTensor[i].xywhROI.roiHeight = cropHeight;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        roiTensor[i * 256].xywhROI.xy.x = cropX;
+        roiTensor[i * 256].xywhROI.xy.y = cropY;
+        roiTensor[i * 256].xywhROI.roiWidth = cropWidth;
+        roiTensor[i * 256].xywhROI.roiHeight = cropHeight;
 
         // Destination image size (after resize)
         dstImgSizes[i].width = targetWidth;
@@ -6141,12 +6165,13 @@ void benchmark_RPP_HIP_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, r
     // Run only once to avoid memory corruption, then multiply time by NUM_RUNS
     auto start = high_resolution_clock::now();
     for (int i = 0; i < num_images; ++i) {
+        // Pass pointer to the i-th 256-element ROI block
         CHECK_RPP_STATUS(rppt_resize_crop_mirror(d_inputs[i], &srcDescs[i],
                                                  d_outputs[i], &dstDescs[i],
                                                  &dstImgSizes[i],
                                                  RpptInterpolationType::BILINEAR,
                                                  &mirrorTensor[i],
-                                                 &roiTensor[i], RpptRoiType::XYWH,
+                                                 &roiTensor[i * 256], RpptRoiType::XYWH,
                                                  handle, RPP_HIP_BACKEND),
                         "ResizeCropMirror");
     }
