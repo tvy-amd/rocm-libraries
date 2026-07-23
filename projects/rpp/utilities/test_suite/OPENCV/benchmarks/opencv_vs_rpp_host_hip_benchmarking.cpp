@@ -298,8 +298,7 @@ int main(int argc, char* argv[]) {
 
         benchmark_OpenCV_Flip(imgsGray, false, 0);
         benchmark_RPP_HOST_Flip(imgsGray, false, 0, handleHost);
-        // DISABLED: rppt_flip corruption bug
-        // benchmark_RPP_HIP_Flip(imgsGray, false, 0, handleHip, stream);
+        benchmark_RPP_HIP_Flip(imgsGray, false, 0, handleHip, stream);
 
         benchmark_OpenCV_Flip(imgsGray, false, -1);
         benchmark_RPP_HOST_Flip(imgsGray, false, -1, handleHost);
@@ -475,18 +474,21 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HOST_Exposure(imgsRGB, true, exposureFactor, handleHost);
         benchmark_RPP_HIP_Exposure(imgsRGB, true, exposureFactor, handleHip, stream);
 
-        benchmark_RPP_HOST_Hue(imgsRGB, hueDelta, handleHost);
         benchmark_OpenCV_Hue(imgsRGB, hueDelta);
+        benchmark_RPP_HOST_Hue(imgsRGB, hueDelta, handleHost);
+        benchmark_RPP_HIP_Hue(imgsRGB, hueDelta, handleHip, stream);
 
-        benchmark_RPP_HOST_Saturation(imgsRGB, satFactor, handleHost);
         benchmark_OpenCV_Saturation(imgsRGB, satFactor);
+        benchmark_RPP_HOST_Saturation(imgsRGB, satFactor, handleHost);
+        benchmark_RPP_HIP_Saturation(imgsRGB, satFactor, handleHip, stream);
 
-        benchmark_RPP_HOST_ColorToGreyscale(imgsRGB, handleHost);
         benchmark_OpenCV_ColorToGreyscale(imgsRGB);
+        benchmark_RPP_HOST_ColorToGreyscale(imgsRGB, handleHost);
+        benchmark_RPP_HIP_ColorToGreyscale(imgsRGB, handleHip, stream);
 
-        benchmark_RPP_HOST_ColorJitter(imgsRGB, 1.2f, 1.3f, 1.2f, 10.f, handleHost);
         benchmark_OpenCV_ColorJitter(imgsRGB, 1.2f, 1.3f, 1.2f, 10.f);
-
+        benchmark_RPP_HOST_ColorJitter(imgsRGB, 1.2f, 1.3f, 1.2f, 10.f, handleHost);
+        
         cout << "\n--- Filter Augmentations ---" << endl;
         benchmark_OpenCV_BoxFilter(imgsRGB, true, filterKernel);
         benchmark_RPP_HOST_BoxFilter(imgsRGB, true, filterKernel, handleHost);
@@ -501,9 +503,10 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_GaussianFilter(imgsRGB, true, filterKernel, gaussSigma, handleHip, stream);
 
         // SobelFilter skipped for RGB (only works on grayscale - see grayscale section)
-
-        benchmark_RPP_HOST_Emboss(imgsRGB, true, 3, 1.0f, handleHost);
         benchmark_OpenCV_Emboss(imgsRGB, true, 3, 1.0f);
+        benchmark_RPP_HOST_Emboss(imgsRGB, true, 3, 1.0f, handleHost);
+        benchmark_RPP_HIP_Emboss(imgsRGB, true, 3, 1.0f, handleHip, stream);
+
 
         cout << "\n--- Geometric Augmentations ---" << endl;
         benchmark_OpenCV_Crop(imgsRGB, true, cropW, cropH);
@@ -534,8 +537,7 @@ int main(int argc, char* argv[]) {
 
         benchmark_OpenCV_Flip(imgsRGB, true, 0);
         benchmark_RPP_HOST_Flip(imgsRGB, true, 0, handleHost);
-        // DISABLED: rppt_flip corruption bug
-        // benchmark_RPP_HIP_Flip(imgsRGB, true, 0, handleHip, stream);
+        benchmark_RPP_HIP_Flip(imgsRGB, true, 0, handleHip, stream);
 
         benchmark_OpenCV_Flip(imgsRGB, true, -1);
         benchmark_RPP_HOST_Flip(imgsRGB, true, -1, handleHost);
