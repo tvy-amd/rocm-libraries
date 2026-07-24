@@ -7894,6 +7894,18 @@ class KernelWriterAssembly(KernelWriter):
             elif not kernel["StoreSwapAddr"]:
               oddIterCode.add(self.localReadSwapOffsets(kernel, False, tPM))
 
+          # swap local read memory token to match the swapped LDS read pointers above.
+          # Without this, ds_load ops emitted after this point (e.g. in the toPGR1/
+          # LoopEndL epilogue for PrefetchGlobalRead>=2 with a single main-loop pass)
+          # keep the stale token, so StinkyTofu's implicit-dependency pass links them
+          # to the wrong (already-retired) producer instead of the ds_store that
+          # actually wrote the swapped-to LDS half - allowing SIA4's aggressive
+          # scheduler to hoist the read ahead of its real producer and read stale/
+          # uninitialized LDS data (observed for Sparse B/Metadata operands).
+          if not self.states.lockLdsReadTokenSwap:
+            self.states.ldsReadTokenIdx = \
+              self.states.memTokenLdsBuffer1 if self.states.ldsReadTokenIdx == self.states.memTokenLdsBuffer0 else self.states.memTokenLdsBuffer0
+
           evenIterPreCode.add(loopLabelEndEvenExit)
           # generate even code here (so far, for PrefetchGlobalRead>=2 only)
           if kernel["PrefetchGlobalRead"]>=2:
