@@ -241,6 +241,71 @@ void csrlsvqr_getError(hipsolverSpHandle_t       handle,
     *max_err += err;
 }
 
+// Check for a cross-stream race: csrlsvqr on a non-default stream must stay
+// correct. Looped to ensure that probabilistic races are caught.
+template <bool HOST, typename T, typename S, typename Td, typename Ud, typename Th, typename Uh>
+void csrlsvqr_getError_stream(hipsolverSpHandle_t       handle,
+                              const int                 n,
+                              const int                 nnzA,
+                              const hipsparseMatDescr_t descrA,
+                              Ud&                       dptrA,
+                              Ud&                       dindA,
+                              Td&                       dvalA,
+                              Td&                       dB,
+                              const S                   tolerance,
+                              const int                 reorder,
+                              Td&                       dX,
+                              Uh&                       hptrA,
+                              Uh&                       hindA,
+                              Th&                       hvalA,
+                              Th&                       hB,
+                              Th&                       hX,
+                              Th&                       hXRes,
+                              Uh&                       hSingularity,
+                              double*                   max_err,
+                              const fs::path            testcase)
+{
+
+    // load A, B, and the reference solution X (same as csrlsvqr_getError)
+    csrlsvqr_initData<true, true, T>(
+        handle, n, nnzA, descrA, dptrA, dindA, dvalA, dB, hptrA, hindA, hvalA, hB, hX, testcase);
+
+    // Put the handle on a non-default stream - this exposes the race
+    hipStream_t stream;
+    CHECK_HIP_ERROR(hipStreamCreate(&stream));
+    CHECK_ROCBLAS_ERROR(hipsolverSpSetStream(handle, stream));
+
+    // Run the test kReps times to catch probabilistic failures
+    constexpr int num_reps = 100;
+    *max_err = 0;
+    for(int rep = 0; rep < num_reps; ++rep)
+    {
+        CHECK_ROCBLAS_ERROR(hipsolver_csrlsvqr(HOST,
+                                               handle,
+                                               n,
+                                               nnzA,
+                                               descrA,
+                                               dvalA.data(),
+                                               dptrA.data(),
+                                               dindA.data(),
+                                               dB.data(),
+                                               tolerance,
+                                               reorder,
+                                               dX.data(),
+                                               hSingularity.data()));
+
+        CHECK_HIP_ERROR(hXRes.transfer_from(dX));
+
+        EXPECT_EQ(hSingularity[0][0], -1);
+        double err = norm_error('I', n, 1, n, hX[0], hXRes[0]);
+        *max_err   = err > *max_err ? err : *max_err;
+    }
+
+    // Clean up handle and stream
+    CHECK_ROCBLAS_ERROR(hipsolverSpSetStream(handle, nullptr));
+    CHECK_HIP_ERROR(hipStreamDestroy(stream));
+}
+
 template <bool HOST, typename T, typename S, typename Td, typename Ud, typename Th, typename Uh>
 void csrlsvqr_getPerfData(hipsolverSpHandle_t       handle,
                           const int                 n,
@@ -357,6 +422,7 @@ void testing_csrlsvqr(Arguments& argus)
     int                      reorder   = argus.get<int>("reorder", 0);
     int                      base1     = argus.get<int>("base1", 0);
     int                      hot_calls = argus.iters;
+    int                      check_streams = argus.get<int>("stream", 0);
 
     // check non-supported values
     // N/A
@@ -479,26 +545,50 @@ void testing_csrlsvqr(Arguments& argus)
 
         // check computations
         if(argus.unit_check || argus.norm_check)
-            csrlsvqr_getError<HOST, T>(handle,
-                                       n,
-                                       nnzA,
-                                       descrA,
-                                       dptrA,
-                                       dindA,
-                                       dvalA,
-                                       dB,
-                                       tolerance,
-                                       reorder,
-                                       dX,
-                                       hptrA,
-                                       hindA,
-                                       hvalA,
-                                       hB,
-                                       hX,
-                                       hXRes,
-                                       hSingularity,
-                                       &max_error,
-                                       testcase);
+        {
+            if(check_streams)
+                csrlsvqr_getError_stream<HOST, T>(handle,
+                                                  n,
+                                                  nnzA,
+                                                  descrA,
+                                                  dptrA,
+                                                  dindA,
+                                                  dvalA,
+                                                  dB,
+                                                  tolerance,
+                                                  reorder,
+                                                  dX,
+                                                  hptrA,
+                                                  hindA,
+                                                  hvalA,
+                                                  hB,
+                                                  hX,
+                                                  hXRes,
+                                                  hSingularity,
+                                                  &max_error,
+                                                  testcase);
+            else
+                csrlsvqr_getError<HOST, T>(handle,
+                                           n,
+                                           nnzA,
+                                           descrA,
+                                           dptrA,
+                                           dindA,
+                                           dvalA,
+                                           dB,
+                                           tolerance,
+                                           reorder,
+                                           dX,
+                                           hptrA,
+                                           hindA,
+                                           hvalA,
+                                           hB,
+                                           hX,
+                                           hXRes,
+                                           hSingularity,
+                                           &max_error,
+                                           testcase);
+        }
 
         // collect performance data
         if(argus.timing)
@@ -546,26 +636,50 @@ void testing_csrlsvqr(Arguments& argus)
 
         // check computations
         if(argus.unit_check || argus.norm_check)
-            csrlsvqr_getError<HOST, T>(handle,
-                                       n,
-                                       nnzA,
-                                       descrA,
-                                       dptrA,
-                                       dindA,
-                                       dvalA,
-                                       dB,
-                                       tolerance,
-                                       reorder,
-                                       dX,
-                                       hptrA,
-                                       hindA,
-                                       hvalA,
-                                       hB,
-                                       hX,
-                                       hXRes,
-                                       hSingularity,
-                                       &max_error,
-                                       testcase);
+        {
+            if(check_streams)
+                csrlsvqr_getError_stream<HOST, T>(handle,
+                                                  n,
+                                                  nnzA,
+                                                  descrA,
+                                                  dptrA,
+                                                  dindA,
+                                                  dvalA,
+                                                  dB,
+                                                  tolerance,
+                                                  reorder,
+                                                  dX,
+                                                  hptrA,
+                                                  hindA,
+                                                  hvalA,
+                                                  hB,
+                                                  hX,
+                                                  hXRes,
+                                                  hSingularity,
+                                                  &max_error,
+                                                  testcase);
+            else
+                csrlsvqr_getError<HOST, T>(handle,
+                                           n,
+                                           nnzA,
+                                           descrA,
+                                           dptrA,
+                                           dindA,
+                                           dvalA,
+                                           dB,
+                                           tolerance,
+                                           reorder,
+                                           dX,
+                                           hptrA,
+                                           hindA,
+                                           hvalA,
+                                           hB,
+                                           hX,
+                                           hXRes,
+                                           hSingularity,
+                                           &max_error,
+                                           testcase);
+        }
 
         // collect performance data
         if(argus.timing)

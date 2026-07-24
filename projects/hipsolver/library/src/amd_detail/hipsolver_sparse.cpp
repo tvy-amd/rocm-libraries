@@ -467,6 +467,8 @@ try
         return HIPSOLVER_STATUS_NOT_INITIALIZED;
 
     hipsolverSpHandle* sp = (hipsolverSpHandle*)handle;
+    if(rocsparse_set_stream(sp->sphandle, streamId) != rocsparse_status_success)
+        return HIPSOLVER_STATUS_INTERNAL_ERROR;
     return hipsolver::rocblas2hip_status(rocblas_set_stream(sp->handle, streamId));
 }
 catch(...)
