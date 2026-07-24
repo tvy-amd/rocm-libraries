@@ -256,7 +256,7 @@ if(HIPBLASLT_BUNDLE_PYTHON_DEPS OR ROCISA_STANDALONE)
         if(_stinkytofu_from_subdirectory)
             # Source-built: vendor libstinkytofu into the wheel — no installed copy exists.
             install(FILES $<TARGET_FILE:stinkytofu::stinkytofu> DESTINATION rocisa)
-            if(NOT WIN32)
+            if(NOT WIN32 AND BUILD_SHARED_LIBS)
                 install(FILES $<TARGET_SONAME_FILE:stinkytofu::stinkytofu> DESTINATION rocisa)
             endif()
         endif()
@@ -274,8 +274,10 @@ if(HIPBLASLT_BUNDLE_PYTHON_DEPS OR ROCISA_STANDALONE)
             # INSTALL_RPATH=$ORIGIN (set above) resolves it at import time.
             install(FILES $<TARGET_FILE:stinkytofu::stinkytofu>
                 DESTINATION "${_rocisa_install_dir}" COMPONENT runtime)
-            install(FILES $<TARGET_SONAME_FILE:stinkytofu::stinkytofu>
-                DESTINATION "${_rocisa_install_dir}" COMPONENT runtime)
+            if(BUILD_SHARED_LIBS)
+                install(FILES $<TARGET_SONAME_FILE:stinkytofu::stinkytofu>
+                    DESTINATION "${_rocisa_install_dir}" COMPONENT runtime)
+            endif()
         endif()
     endif()
 
