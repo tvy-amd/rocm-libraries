@@ -38,7 +38,7 @@ import numpy as np
 DEFAULT_OUTPUT_DIR = "input_images_dataset"
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
-DEFAULT_NUM_IMAGES = 1
+DEFAULT_NUM_IMAGES = 128
 
 
 def create_output_dir(output_dir):

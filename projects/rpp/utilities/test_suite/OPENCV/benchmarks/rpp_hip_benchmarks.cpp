@@ -38,14 +38,14 @@ inline void set_descriptor_dims_and_strides_local(RpptDescPtr descPtr, int noOfI
     descPtr->h = maxHeight;
     descPtr->c = numChannels;
 
-    // CRITICAL: Align width to multiple of 8 for HIP backend memory alignment
-    // This matches the reference implementation in rpp_test_suite_image.h
-    descPtr->w = (maxWidth / 8) * 8 + 8 + additionalStride;
+    // Set w to actual image width - kernel should only process actual image pixels
+    descPtr->w = maxWidth;
 
     // NOTE: Strides will be set by update_strides_from_layout() after layout is assigned
-    // Initialize with default NHWC strides for now
-    descPtr->strides.nStride = descPtr->h * descPtr->w * descPtr->c;
-    descPtr->strides.hStride = descPtr->w * descPtr->c;
+    // For strides, we need to use ALIGNED width for memory layout
+    int alignedWidth = (maxWidth / 8) * 8 + 8 + additionalStride;
+    descPtr->strides.nStride = descPtr->h * alignedWidth * descPtr->c;
+    descPtr->strides.hStride = alignedWidth * descPtr->c;
     descPtr->strides.wStride = descPtr->c;
     descPtr->strides.cStride = 1;
 }
@@ -1504,8 +1504,9 @@ void benchmark_RPP_HIP_Flip(const vector<Mat>& imgs, bool isColor, int flipCode,
         roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
         roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
 
-        // Calculate buffer size based on aligned descriptor dimensions (not original image size)
-        size_t alignedBufferSize = srcDescs[i].n * srcDescs[i].h * srcDescs[i].w * srcDescs[i].c * sizeof(Rpp8u);
+        // Calculate buffer size based on aligned stride (not descriptor width which is actual image size)
+        // Buffer size = nStride because we only have n=1 image
+        size_t alignedBufferSize = srcDescs[i].strides.nStride * sizeof(Rpp8u);
 
         CHECK_HIP_STATUS(hipMalloc(&d_inputs[i], alignedBufferSize));
         CHECK_HIP_STATUS(hipMalloc(&d_outputs[i], alignedBufferSize));
@@ -1514,7 +1515,7 @@ void benchmark_RPP_HIP_Flip(const vector<Mat>& imgs, bool isColor, int flipCode,
         // Source has original width, destination has aligned width
         Rpp8u* h_tempBuffer = new Rpp8u[alignedBufferSize]();  // Zero-initialized
         int originalWidth = imgs[i].cols;
-        int alignedWidth = srcDescs[i].w;
+        int alignedWidth = srcDescs[i].strides.hStride / srcDescs[i].c;  // Extract aligned width from stride
         int elementsPerRow = originalWidth * numChannels;
 
         for (int row = 0; row < imgs[i].rows; ++row) {
@@ -1529,6 +1530,19 @@ void benchmark_RPP_HIP_Flip(const vector<Mat>& imgs, bool isColor, int flipCode,
 
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
+        // CRITICAL: Sync before resetting ROI to prevent CPU-GPU race
+        // The GPU may still be reading roiTensor from the previous iteration
+        if (k > 0) {
+            CHECK_HIP_STATUS(hipStreamSynchronize(stream));
+        }
+
+        for (int i = 0; i < num_images; ++i) {       
+            roiTensor[i * 256].xywhROI.xy.x = 0;
+            roiTensor[i * 256].xywhROI.xy.y = 0;
+            roiTensor[i * 256].xywhROI.roiWidth = imgs[i].cols;
+            roiTensor[i * 256].xywhROI.roiHeight = imgs[i].rows;
+        }
+
         for (int i = 0; i < num_images; ++i) {
             // Pass pointer to the i-th 256-element ROI block
             CHECK_RPP_STATUS(rppt_flip(d_inputs[i], &srcDescs[i], d_outputs[i], &dstDescs[i],

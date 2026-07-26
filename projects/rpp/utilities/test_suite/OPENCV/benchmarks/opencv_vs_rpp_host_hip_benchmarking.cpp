@@ -302,8 +302,7 @@ int main(int argc, char* argv[]) {
 
         benchmark_OpenCV_Flip(imgsGray, false, -1);
         benchmark_RPP_HOST_Flip(imgsGray, false, -1, handleHost);
-        // DISABLED: rppt_flip corruption bug
-        // benchmark_RPP_HIP_Flip(imgsGray, false, -1, handleHip, stream);
+        benchmark_RPP_HIP_Flip(imgsGray, false, -1, handleHip, stream);
 
         benchmark_OpenCV_Rotate(imgsGray, false, angleDeg);
         benchmark_RPP_HOST_Rotate(imgsGray, false, angleDeg, handleHost);
@@ -437,7 +436,6 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_Phase(imgsGray, false, handleHip, stream);
 
         benchmark_OpenCV_Normalize(imgsGray, false);
-        // benchmark_RPP_HOST_Normalize(imgsGray, false, handleHost);
         benchmark_RPP_HOST_Normalize_SingleImage(imgsGray, false, handleHost);
         benchmark_RPP_HIP_Normalize_SingleImage(imgsGray, false, handleHip, stream);
 
@@ -486,8 +484,8 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HOST_ColorToGreyscale(imgsRGB, handleHost);
         benchmark_RPP_HIP_ColorToGreyscale(imgsRGB, handleHip, stream);
 
-        benchmark_OpenCV_ColorJitter(imgsRGB, 1.2f, 1.3f, 1.2f, 10.f);
-        benchmark_RPP_HOST_ColorJitter(imgsRGB, 1.2f, 1.3f, 1.2f, 10.f, handleHost);
+        // benchmark_OpenCV_ColorJitter(imgsRGB, 1.2f, 1.3f, 1.2f, 10.f);
+        // benchmark_RPP_HOST_ColorJitter(imgsRGB, 1.2f, 1.3f, 1.2f, 10.f, handleHost);
         
         cout << "\n--- Filter Augmentations ---" << endl;
         benchmark_OpenCV_BoxFilter(imgsRGB, true, filterKernel);
@@ -541,8 +539,7 @@ int main(int argc, char* argv[]) {
 
         benchmark_OpenCV_Flip(imgsRGB, true, -1);
         benchmark_RPP_HOST_Flip(imgsRGB, true, -1, handleHost);
-        // DISABLED: rppt_flip corruption bug
-        // benchmark_RPP_HIP_Flip(imgsRGB, true, -1, handleHip, stream);
+        benchmark_RPP_HIP_Flip(imgsRGB, true, -1, handleHip, stream);
 
         benchmark_OpenCV_Rotate(imgsRGB, true, angleDeg);
         benchmark_RPP_HOST_Rotate(imgsRGB, true, angleDeg, handleHost);
@@ -737,7 +734,6 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_Phase(imgsRGB, true, handleHip, stream);
 
         benchmark_OpenCV_Normalize(imgsRGB, true);
-        // benchmark_RPP_HOST_Normalize(imgsRGB, true, handleHost);
         benchmark_RPP_HOST_Normalize_SingleImage(imgsRGB, true, handleHost);
         benchmark_RPP_HIP_Normalize_SingleImage(imgsRGB, true, handleHip, stream);
 
