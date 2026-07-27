@@ -369,6 +369,112 @@ RpptROI3D createFullImageROI3D(const Mat& img) {
     return roi3d;
 }
 
+// Helper to set descriptor dimensions and strides
+void set_descriptor_dims_and_strides(RpptDesc* descPtr, int noOfImages, int maxHeight,
+                                    int maxWidth, int numChannels, int offsetInBytes,
+                                    int additionalStride) {
+    descPtr->numDims = 4;
+    descPtr->offsetInBytes = offsetInBytes;
+    descPtr->n = noOfImages;
+    descPtr->h = maxHeight;
+    descPtr->w = maxWidth;
+    descPtr->c = numChannels;
+
+    // BUGFIX: Padding causes stride/buffer mismatch for batched operations
+    // The padding was causing segfaults in BICUBIC interpolation because:
+    // 1. Buffer allocated with padded width
+    // 2. Data copied with actual width
+    // 3. RPP kernel accesses with padded stride but uninitialized padding
+    // 4. BICUBIC's 4x4 neighborhood exposes this by reading beyond valid data
+    // Optionally set w stride as a multiple of 8 for src/dst
+    // descPtr->w = (descPtr->w / 8) * 8 + 8 + additionalStride;  // DISABLED - causes segfault
+    // set strides
+    if (descPtr->layout == RpptLayout::NHWC) {
+        descPtr->strides.nStride = descPtr->c * descPtr->w * descPtr->h;
+        descPtr->strides.hStride = descPtr->c * descPtr->w;
+        descPtr->strides.wStride = descPtr->c;
+        descPtr->strides.cStride = 1;
+    } else if (descPtr->layout == RpptLayout::NCHW) {
+        descPtr->strides.nStride = descPtr->c * descPtr->w * descPtr->h;
+        descPtr->strides.cStride = descPtr->w * descPtr->h;
+        descPtr->strides.hStride = descPtr->w;
+        descPtr->strides.wStride = 1;
+    }
+}
+
+// Helper to generate channel dropout mask
+void generate_channel_dropout_mask(Rpp8u* dropoutTensor, Rpp32f* dropoutProbability, int batchSize,
+                                   int channels, int seed) {
+    omp_set_dynamic(0);
+
+#pragma omp parallel for num_threads(omp_get_max_threads())
+    for (int batchCount = 0; batchCount < batchSize; batchCount++) {
+        std::mt19937 rng(seed + batchCount);
+        std::bernoulli_distribution keepDist(1.0f - dropoutProbability[batchCount]);
+        Rpp8u* maskPtrTemp = dropoutTensor + (batchCount * channels);
+        bool atLeastOne = false;
+
+        for (int channel = 0; channel < channels; channel++) {
+            maskPtrTemp[channel] = keepDist(rng);
+            atLeastOne |= maskPtrTemp[channel];
+        }
+
+        if (!atLeastOne) maskPtrTemp[rng() % channels] = 1;
+    }
+}
+
+// Helper to initialize cutout dropout
+void init_cutout_dropout(int batchSize, int maxBoxesPerImage, Rpp32u* numOfBoxes,
+                        RpptRoiLtrb* anchorBoxInfoTensor, RpptROI* roiTensorPtrSrc,
+                        int channels, int BitDepthTestMode, int seed, int dropoutType,
+                        void* colorBuffer) {
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<float> pos_ratio(0.1f, 0.9f);
+    std::uniform_real_distribution<float> wh_ratio_cutout(0.4f, 0.6f);
+
+    Rpp8u* colors8u = reinterpret_cast<Rpp8u*>(colorBuffer);
+    Rpp16f* colors16f = reinterpret_cast<Rpp16f*>(colorBuffer);
+    Rpp32f* colors32f = reinterpret_cast<Rpp32f*>(colorBuffer);
+    Rpp8s* colors8s = reinterpret_cast<Rpp8s*>(colorBuffer);
+
+    for (int i = 0; i < batchSize; i++) {
+        const auto& roi = roiTensorPtrSrc[i].xywhROI;
+        const float roiW = static_cast<float>(roi.roiWidth);
+        const float roiH = static_cast<float>(roi.roiHeight);
+        const float roiX = static_cast<float>(roi.xy.x);
+        const float roiY = static_cast<float>(roi.xy.y);
+
+        float boxW, boxH;
+
+        float squareSize = wh_ratio_cutout(rng) * std::min(roiW, roiH);
+        boxW = boxH = std::max(1.0f, squareSize);
+        const float x_start = std::max(0.0f, std::min(pos_ratio(rng) * (roiW - boxW), roiW - boxW));
+        const float y_start = std::max(0.0f, std::min(pos_ratio(rng) * (roiH - boxH), roiH - boxH));
+
+        RpptRoiLtrb& box = anchorBoxInfoTensor[i * maxBoxesPerImage];
+        box.lt.x = static_cast<Rpp32u>(roiX + x_start);
+        box.lt.y = static_cast<Rpp32u>(roiY + y_start);
+        box.rb.x = static_cast<Rpp32u>(roiX + x_start + boxW - 1.0f);
+        box.rb.y = static_cast<Rpp32u>(roiY + y_start + boxH - 1.0f);
+
+        if (colorBuffer != nullptr) {
+            int colorOffset = (i * maxBoxesPerImage) * channels;
+            Rpp32f dropoutColor = 0.0f;
+            for (int c = 0; c < channels; c++) {
+                if (BitDepthTestMode == 0) // U8_TO_U8
+                    colors8u[colorOffset + c] = (Rpp8u)dropoutColor;
+                else if (BitDepthTestMode == 2) // F16_TO_F16
+                    colors16f[colorOffset + c] = (Rpp16f)(dropoutColor / 255.0f);
+                else if (BitDepthTestMode == 3) // F32_TO_F32
+                    colors32f[colorOffset + c] = (Rpp32f)(dropoutColor);
+                else if (BitDepthTestMode == 4) // I8_TO_I8
+                    colors8s[colorOffset + c] = (Rpp8s)(dropoutColor - 128);
+            }
+        }
+        numOfBoxes[i] = 1;
+    }
+}
+
 // ==================== RPP COLOR AUGMENTATIONS ====================
 bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& grayResults,
                          const vector<BenchmarkResult>& colorResults) {
@@ -611,79 +717,71 @@ void init_grid_dropout_boxes(int batchCount, RpptRoiLtrb* anchorBoxInfoTensor,
     }
 }
 
-// Dropout helper function for channel dropout
-void generate_channel_dropout_mask(Rpp8u* dropoutTensor, Rpp32f* dropoutProbability, int batchSize,
-                                   int channels, int seed) {
-    int numThreads = NUM_THREADS;
-    omp_set_dynamic(0);
+// sets generic descriptor dimensions and strides for 5D tensors
+void set_generic_descriptor(RpptGenericDescPtr descriptorPtr3D, int noOfImages, int maxX,
+                           int maxY, int maxZ, int numChannels, int offsetInBytes,
+                           int layoutType) {
+    descriptorPtr3D->numDims = 5;
+    descriptorPtr3D->offsetInBytes = offsetInBytes;
+    descriptorPtr3D->dataType = RpptDataType::F32;
 
-#pragma omp parallel for num_threads(numThreads)
-    for (int batchCount = 0; batchCount < batchSize; batchCount++) {
-        std::mt19937 rng(seed + batchCount);
-        std::bernoulli_distribution keepDist(1.0f - dropoutProbability[batchCount]);
-        Rpp8u* maskPtrTemp = dropoutTensor + (batchCount * channels);
-        bool atLeastOne = false;
-
-        for (int channel = 0; channel < channels; channel++) {
-            maskPtrTemp[channel] = keepDist(rng);
-            atLeastOne |= maskPtrTemp[channel];
-        }
-
-        if (!atLeastOne) maskPtrTemp[rng() % channels] = 1;
+    if (layoutType == 0) {
+        descriptorPtr3D->layout = RpptLayout::NCDHW;
+        descriptorPtr3D->dims[0] = noOfImages;
+        descriptorPtr3D->dims[1] = numChannels;
+        descriptorPtr3D->dims[2] = maxZ;
+        descriptorPtr3D->dims[3] = maxY;
+        descriptorPtr3D->dims[4] = maxX;
+    } else if (layoutType == 1) {
+        descriptorPtr3D->layout = RpptLayout::NDHWC;
+        descriptorPtr3D->dims[0] = noOfImages;
+        descriptorPtr3D->dims[1] = maxZ;
+        descriptorPtr3D->dims[2] = maxY;
+        descriptorPtr3D->dims[3] = maxX;
+        descriptorPtr3D->dims[4] = numChannels;
     }
+
+    descriptorPtr3D->strides[0] = descriptorPtr3D->dims[1] * descriptorPtr3D->dims[2] *
+                                  descriptorPtr3D->dims[3] * descriptorPtr3D->dims[4];
+    descriptorPtr3D->strides[1] =
+        descriptorPtr3D->dims[2] * descriptorPtr3D->dims[3] * descriptorPtr3D->dims[4];
+    descriptorPtr3D->strides[2] = descriptorPtr3D->dims[3] * descriptorPtr3D->dims[4];
+    descriptorPtr3D->strides[3] = descriptorPtr3D->dims[4];
+    descriptorPtr3D->strides[4] = 1;
 }
 
-// Dropout helper function for cutout dropout
-void init_cutout_dropout(int batchSize, int maxBoxesPerImage, Rpp32u* numOfBoxes,
-                         RpptRoiLtrb* anchorBoxInfoTensor, RpptROIPtr roiTensorPtrSrc, int channels,
-                         int BitDepthTestMode, int seed, int dropoutType, void* colorBuffer) {
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> pos_ratio(0.1f, 0.9f);
-    std::uniform_real_distribution<float> wh_ratio_cutout(0.4f, 0.6f);
+// initialize remap tables for horizontal flip effect
+void init_remap(RpptDescPtr tableDescPtr, RpptDescPtr srcDescPtr, RpptROIPtr roiTensorPtrSrc,
+               Rpp32f* rowRemapTable, Rpp32f* colRemapTable) {
+    tableDescPtr->c = 1;
+    tableDescPtr->strides.nStride = srcDescPtr->h * srcDescPtr->w;
+    tableDescPtr->strides.hStride = srcDescPtr->w;
+    tableDescPtr->strides.wStride = tableDescPtr->strides.cStride = 1;
+    Rpp32u batchSize = srcDescPtr->n;
 
-    Rpp8u* colors8u = reinterpret_cast<Rpp8u*>(colorBuffer);
-    Rpp16f* colors16f = reinterpret_cast<Rpp16f*>(colorBuffer);
-    Rpp32f* colors32f = reinterpret_cast<Rpp32f*>(colorBuffer);
-    Rpp8s* colors8s = reinterpret_cast<Rpp8s*>(colorBuffer);
+    for (Rpp32u count = 0; count < batchSize; count++) {
+        Rpp32f *rowRemapTableTemp, *colRemapTableTemp;
+        rowRemapTableTemp = rowRemapTable + count * tableDescPtr->strides.nStride;
+        colRemapTableTemp = colRemapTable + count * tableDescPtr->strides.nStride;
+        Rpp32u halfWidth = roiTensorPtrSrc[count].xywhROI.roiWidth / 2;
+        for (Rpp32u i = 0; i < roiTensorPtrSrc[count].xywhROI.roiHeight; i++) {
+            Rpp32f *rowRemapTableTempRow, *colRemapTableTempRow;
+            rowRemapTableTempRow = rowRemapTableTemp + i * tableDescPtr->strides.hStride;
+            colRemapTableTempRow = colRemapTableTemp + i * tableDescPtr->strides.hStride;
+            Rpp32u j = 0;
+            for (; j < halfWidth; j++) {
+                *rowRemapTableTempRow = i;
+                *colRemapTableTempRow = halfWidth - j;
 
-    for (int i = 0; i < batchSize; i++) {
-        numOfBoxes[i] = maxBoxesPerImage;
-        for (int j = 0; j < maxBoxesPerImage; j++) {
-            int idx = i * maxBoxesPerImage + j;
+                rowRemapTableTempRow++;
+                colRemapTableTempRow++;
+            }
+            for (; j < roiTensorPtrSrc[count].xywhROI.roiWidth; j++) {
+                *rowRemapTableTempRow = i;
+                *colRemapTableTempRow = j;
 
-            // Get ROI dimensions
-            Rpp32f roiWidth = static_cast<Rpp32f>(roiTensorPtrSrc[i].xywhROI.roiWidth);
-            Rpp32f roiHeight = static_cast<Rpp32f>(roiTensorPtrSrc[i].xywhROI.roiHeight);
-            Rpp32f roiX = static_cast<Rpp32f>(roiTensorPtrSrc[i].xywhROI.xy.x);
-            Rpp32f roiY = static_cast<Rpp32f>(roiTensorPtrSrc[i].xywhROI.xy.y);
-
-            // Random box dimensions (40-60% of ROI)
-            Rpp32f boxWidth = roiWidth * wh_ratio_cutout(rng);
-            Rpp32f boxHeight = roiHeight * wh_ratio_cutout(rng);
-
-            // Random position within ROI
-            Rpp32f maxX = roiX + roiWidth - boxWidth;
-            Rpp32f maxY = roiY + roiHeight - boxHeight;
-            Rpp32f boxX = roiX + (maxX - roiX) * pos_ratio(rng);
-            Rpp32f boxY = roiY + (maxY - roiY) * pos_ratio(rng);
-
-            // Set anchor box in LTRB format
-            anchorBoxInfoTensor[idx].lt.x = static_cast<Rpp32u>(boxX);
-            anchorBoxInfoTensor[idx].lt.y = static_cast<Rpp32u>(boxY);
-            anchorBoxInfoTensor[idx].rb.x = static_cast<Rpp32u>(boxX + boxWidth);
-            anchorBoxInfoTensor[idx].rb.y = static_cast<Rpp32u>(boxY + boxHeight);
-
-            // Set random color for the box
-            for (int c = 0; c < channels; c++) {
-                int colorIdx = idx * channels + c;
-                if (BitDepthTestMode == 0)  // U8
-                    colors8u[colorIdx] = static_cast<Rpp8u>(rng() % 256);
-                else if (BitDepthTestMode == 2)  // F32
-                    colors32f[colorIdx] = static_cast<Rpp32f>(rng() % 256) / 255.0f;
-                else if (BitDepthTestMode == 1)  // F16
-                    colors16f[colorIdx] = static_cast<Rpp16f>(rng() % 256) / 255.0f;
-                else if (BitDepthTestMode == 6)  // I8
-                    colors8s[colorIdx] = static_cast<Rpp8s>((rng() % 256) - 128);
+                rowRemapTableTempRow++;
+                colRemapTableTempRow++;
             }
         }
     }

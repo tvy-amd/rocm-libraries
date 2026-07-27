@@ -3023,3 +3023,4584 @@ void benchmark_RPP_HOST_Slice(const vector<Mat>& imgs, bool isColor, rppHandle_t
     printResult("RPP HOST Slice", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "center_half");
 }
+
+// ==================== BATCHED RPP HOST BENCHMARK FUNCTIONS ====================
+// Following reference implementation from Tensor_image_host.cpp
+// Memory allocation: calloc/free (not hipHostMalloc)
+// Descriptor setup: set_descriptor_dims_and_strides from rpp_test_suite_image.h
+
+// Helper function to convert RpptDesc to RpptGenericDesc for 3D operations
+inline void convert_desc_to_generic_desc_3d(RpptDescPtr descPtr, RpptGenericDescPtr genDescPtr) {
+    genDescPtr->numDims = 5;  // NCDHW format
+    genDescPtr->offsetInBytes = descPtr->offsetInBytes;
+    genDescPtr->dataType = descPtr->dataType;
+    // Convert 2D layout to 3D layout equivalent for 3D arithmetic operations
+    // NCHW -> NCDHW, NHWC -> NDHWC to match RpptLayout enum for 3D tensors
+    if (descPtr->layout == RpptLayout::NCHW) {
+        genDescPtr->layout = RpptLayout::NCDHW;
+    } else if (descPtr->layout == RpptLayout::NHWC) {
+        genDescPtr->layout = RpptLayout::NDHWC;
+    } else {
+        genDescPtr->layout = descPtr->layout;  // Preserve other layouts
+    }
+
+    // Map 2D (NCHW/NHWC) to 3D (NCDHW) by adding depth=1
+    genDescPtr->dims[0] = descPtr->n;  // batch
+    genDescPtr->dims[1] = descPtr->c;  // channels
+    genDescPtr->dims[2] = 1;           // depth (always 1 for 2D images)
+    genDescPtr->dims[3] = descPtr->h;  // height
+    genDescPtr->dims[4] = descPtr->w;  // width
+
+    // Set strides for 3D layout (after conversion from 2D)
+    // For NCDHW (from NCHW): strides are [N, C, D, H, W]
+    // For NDHWC (from NHWC): strides are [N, D, H, W, C]
+    if (descPtr->layout == RpptLayout::NCHW) {
+        // NCDHW layout: Batch-Channels-Depth-Height-Width
+        genDescPtr->strides[0] = descPtr->strides.nStride;              // N stride
+        genDescPtr->strides[1] = descPtr->strides.cStride;              // C stride
+        genDescPtr->strides[2] = descPtr->strides.hStride * descPtr->h; // D stride = h*w (since depth=1)
+        genDescPtr->strides[3] = descPtr->strides.hStride;              // H stride
+        genDescPtr->strides[4] = descPtr->strides.wStride;              // W stride
+    } else {  // NHWC -> NDHWC
+        // NDHWC layout: Batch-Depth-Height-Width-Channels
+        // With depth=1, the ordering is [N, D, H, W, C]
+        genDescPtr->strides[0] = descPtr->strides.nStride;              // N stride = d*h*w*c
+        genDescPtr->strides[1] = descPtr->strides.hStride * descPtr->h; // D stride = h*w*c (since depth=1)
+        genDescPtr->strides[2] = descPtr->strides.hStride;              // H stride = w*c
+        genDescPtr->strides[3] = descPtr->strides.wStride;              // W stride = c
+        genDescPtr->strides[4] = descPtr->strides.cStride;              // C stride = 1
+    }
+}
+
+// Helper function to convert RpptROI to RpptROI3D for 3D operations
+inline void convert_roi_to_roi3d(RpptROIPtr roiPtr, RpptROI3DPtr roi3dPtr, int batchSize) {
+    for (int i = 0; i < batchSize; ++i) {
+        roi3dPtr[i].xyzwhdROI.xyz.x = roiPtr[i].xywhROI.xy.x;
+        roi3dPtr[i].xyzwhdROI.xyz.y = roiPtr[i].xywhROI.xy.y;
+        roi3dPtr[i].xyzwhdROI.xyz.z = 0;  // depth starts at 0
+        roi3dPtr[i].xyzwhdROI.roiWidth = roiPtr[i].xywhROI.roiWidth;
+        roi3dPtr[i].xyzwhdROI.roiHeight = roiPtr[i].xywhROI.roiHeight;
+        roi3dPtr[i].xyzwhdROI.roiDepth = 1;  // depth is always 1 for 2D images
+    }
+}
+
+void benchmark_RPP_HOST_Flip_Batched(const vector<Mat>& imgs, bool isColor, int flipCode, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+    
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u *horizontalTensor = static_cast<Rpp32u*>(calloc(batchSize, sizeof(Rpp32u)));
+    Rpp32u *verticalTensor = static_cast<Rpp32u*>(calloc(batchSize, sizeof(Rpp32u)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        horizontalTensor[i] = (flipCode == 1 || flipCode == -1) ? 1 : 0;
+        verticalTensor[i] = (flipCode == 0 || flipCode == -1) ? 1 : 0;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_flip(input, &srcDesc, output, &dstDesc, horizontalTensor, verticalTensor, 
+                                   roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "Flip");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(horizontalTensor);
+    free(verticalTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST Flip (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "flipCode=" + to_string(flipCode));
+}
+
+// This file contains the batched implementations to match HIP backend
+
+#include "benchmarks_common.h"
+
+void benchmark_RPP_HOST_Resize_Batched(const vector<Mat>& imgs, bool isColor, int dstW, int dstH,
+                                      RpptInterpolationType interpType, const string& interpName,
+                                      rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, dstH, dstW, numChannels, offsetInBytes);
+
+    Rpp64u srcBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp64u dstBufferSize = (Rpp64u)dstDesc.h * (Rpp64u)dstDesc.w * (Rpp64u)dstDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(srcBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(dstBufferSize, sizeof(Rpp8u)));
+
+    RpptImagePatch *dstImgSizes = static_cast<RpptImagePatch*>(calloc(batchSize, sizeof(RpptImagePatch)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        dstImgSizes[i].width = dstW;
+        dstImgSizes[i].height = dstH;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_resize(input, &srcDesc, output, &dstDesc, dstImgSizes, interpType,
+                                     roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "Resize");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(dstImgSizes);
+    free(roiTensor);
+
+    ostringstream params;
+    params << "type=" << interpName << ", size=" << dstW << "x" << dstH;
+    printResult("RPP HOST Resize (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+}
+
+void benchmark_RPP_HOST_Crop_Batched(const vector<Mat>& imgs, bool isColor, int cropW, int cropH,
+                                     rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, cropH, cropW, numChannels, offsetInBytes);
+
+    Rpp64u srcBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp64u dstBufferSize = (Rpp64u)dstDesc.h * (Rpp64u)dstDesc.w * (Rpp64u)dstDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(srcBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(dstBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    int cropX = (maxWidth - cropW) / 2;
+    int cropY = (maxHeight - cropH) / 2;
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = cropX;
+        roiTensor[i].xywhROI.xy.y = cropY;
+        roiTensor[i].xywhROI.roiWidth = cropW;
+        roiTensor[i].xywhROI.roiHeight = cropH;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_crop(input, &srcDesc, output, &dstDesc,
+                                   roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "Crop");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+
+    ostringstream params;
+    params << "size=" << cropW << "x" << cropH;
+    printResult("RPP HOST Crop (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+}
+
+void benchmark_RPP_HOST_Rotate_Batched(const vector<Mat>& imgs, bool isColor, float angleDeg,
+                                       rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *angleTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        angleTensor[i] = angleDeg;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_rotate(input, &srcDesc, output, &dstDesc, angleTensor,
+                                     RpptInterpolationType::BILINEAR, roiTensor, RpptRoiType::XYWH,
+                                     handle, RPP_HOST_BACKEND), "Rotate");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(angleTensor);
+    free(roiTensor);
+
+    ostringstream params;
+    params << "angle=" << angleDeg << "deg";
+    printResult("RPP HOST Rotate (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+}
+
+void benchmark_RPP_HOST_BoxFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize,
+                                          rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    RpptImageBorderType borderType = RpptImageBorderType::REPLICATE;
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_box_filter(input, &srcDesc, output, &dstDesc, kernelSize, borderType,
+                                         roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "BoxFilter");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST BoxFilter (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+}
+
+void benchmark_RPP_HOST_GaussianFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, float sigma,
+                                               rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    int offsetInBytes = 12 * (kernelSize / 2);
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *stdDevTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        stdDevTensor[i] = sigma;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    RpptImageBorderType borderType = RpptImageBorderType::REPLICATE;
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_gaussian_filter(input, &srcDesc, output, &dstDesc, stdDevTensor, kernelSize,
+                                              borderType, roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "GaussianFilter");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(stdDevTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST GaussianFilter (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+}
+
+void benchmark_RPP_HOST_MedianFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize,
+                                             rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    RpptImageBorderType borderType = RpptImageBorderType::REPLICATE;
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_median_filter(input, &srcDesc, output, &dstDesc, kernelSize, borderType,
+                                            roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "MedianFilter");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST MedianFilter (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+}
+
+void benchmark_RPP_HOST_Hue_Batched(const vector<Mat>& imgs, bool isColor, float hueDelta, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = 3;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = RpptLayout::NHWC;
+    dstDesc.layout = RpptLayout::NHWC;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *hueTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        hueTensor[i] = hueDelta;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_hue(input, &srcDesc, output, &dstDesc, hueTensor,
+                                  roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "Hue");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(hueTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST Hue (Batched)", imgs.size(), true,
+                duration<double, milli>(end - start).count(), "hueDelta=" + to_string(hueDelta));
+}
+
+void benchmark_RPP_HOST_Saturation_Batched(const vector<Mat>& imgs, bool isColor, float satFactor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = 3;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = RpptLayout::NHWC;
+    dstDesc.layout = RpptLayout::NHWC;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *saturationTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        saturationTensor[i] = satFactor;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_saturation(input, &srcDesc, output, &dstDesc, saturationTensor,
+                                        roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "Saturation");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(saturationTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST Saturation (Batched)", imgs.size(), true,
+                duration<double, milli>(end - start).count(), "factor=" + to_string(satFactor));
+}
+
+void benchmark_RPP_HOST_ColorToGreyscale_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int srcChannels = 3;
+    int dstChannels = 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = RpptLayout::NHWC;
+    srcDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, srcChannels, offsetInBytes);
+
+    dstDesc.layout = RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, dstChannels, offsetInBytes);
+
+    Rpp64u srcBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp64u dstBufferSize = (Rpp64u)dstDesc.h * (Rpp64u)dstDesc.w * (Rpp64u)dstDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(srcBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(dstBufferSize, sizeof(Rpp8u)));
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * srcChannels, imgs[i].cols * srcChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_color_to_greyscale(input, &srcDesc, output, &dstDesc, RpptSubpixelLayout::BGRtype,
+                                                 handle, RPP_HOST_BACKEND), "ColorToGreyscale");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+
+    printResult("RPP HOST ColorToGreyscale (Batched)", imgs.size(), true,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_Brightness_Batched(const vector<Mat>& imgs, bool isColor, float alpha, float beta,
+                                           rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *alphaTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *betaTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        alphaTensor[i] = alpha;
+        betaTensor[i] = beta;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_brightness(input, &srcDesc, output, &dstDesc, alphaTensor, betaTensor,
+                                        roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "Brightness");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(alphaTensor);
+    free(betaTensor);
+    free(roiTensor);
+
+    ostringstream params;
+    params << "alpha=" << alpha << ", beta=" << beta;
+    printResult("RPP HOST Brightness (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+}
+
+void benchmark_RPP_HOST_Contrast_Batched(const vector<Mat>& imgs, bool isColor, float contrastFactor, float contrastCenter,
+                                        rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *contrastFactorTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *contrastCenterTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        contrastFactorTensor[i] = contrastFactor;
+        contrastCenterTensor[i] = contrastCenter;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_contrast(input, &srcDesc, output, &dstDesc, contrastFactorTensor, contrastCenterTensor,
+                                       roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "Contrast");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(contrastFactorTensor);
+    free(contrastCenterTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST Contrast (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(),
+                "factor=" + to_string(contrastFactor) + ", center=" + to_string(contrastCenter));
+}
+
+void benchmark_RPP_HOST_Emboss_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, float strength,
+                                       rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *strengthTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        strengthTensor[i] = strength;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    RpptImageBorderType borderType = RpptImageBorderType::REPLICATE;
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_emboss(input, &srcDesc, output, &dstDesc, strengthTensor, kernelSize, borderType,
+                                     roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "Emboss");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(strengthTensor);
+    free(roiTensor);
+
+    ostringstream params;
+    params << "kernel=" << kernelSize << ", strength=" << strength;
+    printResult("RPP HOST Emboss (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+}
+
+void benchmark_RPP_HOST_AddScalar_Batched(const vector<Mat>& imgs, bool isColor, float addVal,
+                                         rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    // Scalar operations only support F32 datatype, not U8
+    srcDesc.dataType = RpptDataType::F32;
+    dstDesc.dataType = RpptDataType::F32;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    // Convert to GenericDesc for 3D arithmetic operations
+    RpptGenericDesc srcGenDesc, dstGenDesc;
+    convert_desc_to_generic_desc_3d(&srcDesc, &srcGenDesc);
+    convert_desc_to_generic_desc_3d(&dstDesc, &dstGenDesc);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    // Allocate F32 buffers since scalar operations require F32 datatype
+    Rpp32f *input = static_cast<Rpp32f*>(calloc(ioBufferSize, sizeof(Rpp32f)));
+    Rpp32f *output = static_cast<Rpp32f*>(calloc(ioBufferSize, sizeof(Rpp32f)));
+
+    Rpp32f *addTensor = static_cast<Rpp32f*>(calloc(batchSize * numChannels, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+    RpptROI3D *roi3dTensor = static_cast<RpptROI3D*>(calloc(batchSize, sizeof(RpptROI3D)));
+
+    for (int i = 0; i < batchSize; i++) {
+        for (int c = 0; c < numChannels; c++) {
+            addTensor[i * numChannels + c] = addVal;
+        }
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    // Convert U8 image data to F32 (normalized to 0-255 range for consistency with OpenCV)
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp32f* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            for (int col = 0; col < imgs[i].cols * numChannels; col++) {
+                imgPtr[row * srcDesc.strides.hStride + col] =
+                    static_cast<Rpp32f>(imgs[i].data[row * imgs[i].cols * numChannels + col]);
+            }
+        }
+    }
+
+    // Convert ROI to ROI3D
+    convert_roi_to_roi3d(roiTensor, roi3dTensor, batchSize);
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_add_scalar(input, &srcGenDesc, output, &dstGenDesc, addTensor,
+                                        roi3dTensor, RpptRoi3DType::XYZWHD, handle, RPP_HOST_BACKEND),
+                        "AddScalar");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(addTensor);
+    free(roiTensor);
+    free(roi3dTensor);
+
+    printResult("RPP HOST AddScalar (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "value=" + to_string((int)addVal));
+}
+
+void benchmark_RPP_HOST_SubtractScalar_Batched(const vector<Mat>& imgs, bool isColor, float subVal,
+                                               rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    // Scalar operations only support F32 datatype, not U8
+    srcDesc.dataType = RpptDataType::F32;
+    dstDesc.dataType = RpptDataType::F32;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    // Convert to GenericDesc for 3D arithmetic operations
+    RpptGenericDesc srcGenDesc, dstGenDesc;
+    convert_desc_to_generic_desc_3d(&srcDesc, &srcGenDesc);
+    convert_desc_to_generic_desc_3d(&dstDesc, &dstGenDesc);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    // Allocate F32 buffers since scalar operations require F32 datatype
+    Rpp32f *input = static_cast<Rpp32f*>(calloc(ioBufferSize, sizeof(Rpp32f)));
+    Rpp32f *output = static_cast<Rpp32f*>(calloc(ioBufferSize, sizeof(Rpp32f)));
+
+    Rpp32f *subTensor = static_cast<Rpp32f*>(calloc(batchSize * numChannels, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+    RpptROI3D *roi3dTensor = static_cast<RpptROI3D*>(calloc(batchSize, sizeof(RpptROI3D)));
+
+    for (int i = 0; i < batchSize; i++) {
+        for (int c = 0; c < numChannels; c++) {
+            subTensor[i * numChannels + c] = subVal;
+        }
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    // Convert U8 image data to F32 (normalized to 0-255 range for consistency with OpenCV)
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp32f* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            for (int col = 0; col < imgs[i].cols * numChannels; col++) {
+                imgPtr[row * srcDesc.strides.hStride + col] =
+                    static_cast<Rpp32f>(imgs[i].data[row * imgs[i].cols * numChannels + col]);
+            }
+        }
+    }
+
+    // Convert ROI to ROI3D
+    convert_roi_to_roi3d(roiTensor, roi3dTensor, batchSize);
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_subtract_scalar(input, &srcGenDesc, output, &dstGenDesc, subTensor,
+                                              roi3dTensor, RpptRoi3DType::XYZWHD, handle, RPP_HOST_BACKEND),
+                        "SubtractScalar");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(subTensor);
+    free(roiTensor);
+    free(roi3dTensor);
+
+    printResult("RPP HOST SubtractScalar (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "value=" + to_string((int)subVal));
+}
+
+void benchmark_RPP_HOST_MultiplyScalar_Batched(const vector<Mat>& imgs, bool isColor, float mulVal,
+                                               rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    // Scalar operations only support F32 datatype, not U8
+    srcDesc.dataType = RpptDataType::F32;
+    dstDesc.dataType = RpptDataType::F32;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    // Convert to GenericDesc for 3D arithmetic operations
+    RpptGenericDesc srcGenDesc, dstGenDesc;
+    convert_desc_to_generic_desc_3d(&srcDesc, &srcGenDesc);
+    convert_desc_to_generic_desc_3d(&dstDesc, &dstGenDesc);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    // Allocate F32 buffers since scalar operations require F32 datatype
+    Rpp32f *input = static_cast<Rpp32f*>(calloc(ioBufferSize, sizeof(Rpp32f)));
+    Rpp32f *output = static_cast<Rpp32f*>(calloc(ioBufferSize, sizeof(Rpp32f)));
+
+    Rpp32f *mulTensor = static_cast<Rpp32f*>(calloc(batchSize * numChannels, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+    RpptROI3D *roi3dTensor = static_cast<RpptROI3D*>(calloc(batchSize, sizeof(RpptROI3D)));
+
+    for (int i = 0; i < batchSize; i++) {
+        for (int c = 0; c < numChannels; c++) {
+            mulTensor[i * numChannels + c] = mulVal;
+        }
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    // Convert U8 image data to F32 (normalized to 0-255 range for consistency with OpenCV)
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp32f* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            for (int col = 0; col < imgs[i].cols * numChannels; col++) {
+                imgPtr[row * srcDesc.strides.hStride + col] =
+                    static_cast<Rpp32f>(imgs[i].data[row * imgs[i].cols * numChannels + col]);
+            }
+        }
+    }
+
+    // Convert ROI to ROI3D
+    convert_roi_to_roi3d(roiTensor, roi3dTensor, batchSize);
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_multiply_scalar(input, &srcGenDesc, output, &dstGenDesc, mulTensor,
+                                              roi3dTensor, RpptRoi3DType::XYZWHD, handle, RPP_HOST_BACKEND),
+                        "MultiplyScalar");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(mulTensor);
+    free(roiTensor);
+    free(roi3dTensor);
+
+    printResult("RPP HOST MultiplyScalar (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "value=" + to_string(mulVal));
+}
+
+void benchmark_RPP_HOST_GaussianNoise_Batched(const vector<Mat>& imgs, bool isColor, float mean,
+                                               float stddev, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *meanTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *stddevTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        meanTensor[i] = mean;
+        stddevTensor[i] = stddev;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    unsigned long long seed = 12345;
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_gaussian_noise(input, &srcDesc, output, &dstDesc, meanTensor, stddevTensor,
+                                             seed, roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "GaussianNoise");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(meanTensor);
+    free(stddevTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST GaussianNoise (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(),
+                "mean=" + to_string(mean) + ", stddev=" + to_string(stddev));
+}
+
+void benchmark_RPP_HOST_SaltAndPepperNoise_Batched(const vector<Mat>& imgs, bool isColor, float noiseProb,
+                                                    rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *noiseProbTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *saltProbTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *saltValueTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *pepperValueTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        noiseProbTensor[i] = noiseProb;
+        saltProbTensor[i] = 0.5f;
+        saltValueTensor[i] = 1.0f;
+        pepperValueTensor[i] = 0.0f;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    Rpp32u seed = 12345;
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_salt_and_pepper_noise(input, &srcDesc, output, &dstDesc, noiseProbTensor,
+                                                     saltProbTensor, saltValueTensor, pepperValueTensor,
+                                                     seed, roiTensor, RpptRoiType::XYWH, handle,
+                                                     RPP_HOST_BACKEND),
+                        "SaltAndPepperNoise");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(noiseProbTensor);
+    free(saltProbTensor);
+    free(saltValueTensor);
+    free(pepperValueTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST SaltAndPepperNoise (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "probability=" + to_string(noiseProb));
+}
+
+void benchmark_RPP_HOST_NoiseShot_Batched(const vector<Mat>& imgs, bool isColor, float shotNoiseFactor,
+                                          rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *shotNoiseTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        shotNoiseTensor[i] = shotNoiseFactor;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_shot_noise(input, &srcDesc, output, &dstDesc, shotNoiseTensor, 12345,
+                                         roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "NoiseShot");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(shotNoiseTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST NoiseShot (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "factor=" + to_string(shotNoiseFactor));
+}
+
+void benchmark_RPP_HOST_ColorCast_Batched(const vector<Mat>& imgs, bool isColor, float rShift, float gShift,
+                                          float bShift, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptRGB *rgbTensor = static_cast<RpptRGB*>(calloc(batchSize, sizeof(RpptRGB)));
+    Rpp32f *alphaTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        rgbTensor[i].R = (Rpp8u)max(0.0f, min(255.0f, rShift));
+        rgbTensor[i].G = (Rpp8u)max(0.0f, min(255.0f, gShift));
+        rgbTensor[i].B = (Rpp8u)max(0.0f, min(255.0f, bShift));
+        alphaTensor[i] = 1.0f;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_color_cast(input, &srcDesc, output, &dstDesc, rgbTensor, alphaTensor,
+                                         roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "ColorCast");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(rgbTensor);
+    free(alphaTensor);
+    free(roiTensor);
+
+    ostringstream params;
+    params << "R=" << rShift << ", G=" << gShift << ", B=" << bShift;
+    printResult("RPP HOST ColorCast (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+}
+
+void benchmark_RPP_HOST_ColorTemperature_Batched(const vector<Mat>& imgs, bool isColor, int adjustmentValue,
+                                                  rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32s *adjustmentTensor = static_cast<Rpp32s*>(calloc(batchSize, sizeof(Rpp32s)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        adjustmentTensor[i] = adjustmentValue;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_color_temperature(input, &srcDesc, output, &dstDesc, adjustmentTensor,
+                                                 roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "ColorTemperature");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(adjustmentTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST ColorTemperature (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "adjustment=" + to_string(adjustmentValue));
+}
+
+void benchmark_RPP_HOST_ColorTwist_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0 || !isColor) return;
+
+    int numChannels = 3;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = RpptLayout::NHWC;
+    dstDesc.layout = RpptLayout::NHWC;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *alpha = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *beta = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *hueShift = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *satFactor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        alpha[i] = 1.0f;     // brightness (0 < brightness <= 20)
+        beta[i] = 1.0f;      // contrast (0 < contrast <= 255)
+        hueShift[i] = 60.0f; // hue (0 <= hue <= 359)
+        satFactor[i] = 1.3f; // saturation (saturation >= 0)
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_color_twist(input, &srcDesc, output, &dstDesc, alpha, beta, hueShift,
+                                          satFactor, roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "ColorTwist");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "hue=" << hueShift[0] << ", sat=" << satFactor[0];
+    printResult("RPP HOST ColorTwist (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    free(alpha);
+    free(beta);
+    free(hueShift);
+    free(satFactor);
+    free(roiTensor);
+}
+
+void benchmark_RPP_HOST_Vignette_Batched(const vector<Mat>& imgs, bool isColor, float vignetteIntensity,
+                                         rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *intensityTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        intensityTensor[i] = vignetteIntensity;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_vignette(input, &srcDesc, output, &dstDesc, intensityTensor,
+                                       roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "Vignette");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(intensityTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST Vignette (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "intensity=" + to_string(vignetteIntensity));
+}
+
+void benchmark_RPP_HOST_NonLinearBlend_Batched(const vector<Mat>& imgs, bool isColor, float stdDev,
+                                               rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize < 2) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input1 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *input2 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *stdDevTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        stdDevTensor[i] = stdDev;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr1 = input1 + i * bufferSizePerImage;
+        Rpp8u* imgPtr2 = input2 + i * bufferSizePerImage;
+        int idx2 = (i + 1) % batchSize;
+
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr1 + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+            memcpy(imgPtr2 + row * srcDesc.strides.hStride, imgs[idx2].data + row * imgs[idx2].cols * numChannels, imgs[idx2].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_non_linear_blend(input1, input2, &srcDesc, output, &dstDesc, stdDevTensor,
+                                               roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "NonLinearBlend");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input1);
+    free(input2);
+    free(output);
+    free(stdDevTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST NonLinearBlend (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "stdDev=" + to_string(stdDev));
+}
+
+void benchmark_RPP_HOST_Posterize_Batched(const vector<Mat>& imgs, bool isColor, int levelBits,
+                                          rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp8u *posterizeLevelBits = static_cast<Rpp8u*>(calloc(batchSize, sizeof(Rpp8u)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        posterizeLevelBits[i] = (Rpp8u)levelBits;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_posterize(input, &srcDesc, output, &dstDesc, posterizeLevelBits,
+                                        roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "Posterize");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(posterizeLevelBits);
+    free(roiTensor);
+
+    printResult("RPP HOST Posterize (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "levelBits=" + to_string(levelBits));
+}
+
+void benchmark_RPP_HOST_Solarize_Batched(const vector<Mat>& imgs, bool isColor, float threshold,
+                                         rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *thresholdTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        thresholdTensor[i] = threshold;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_solarize(input, &srcDesc, output, &dstDesc, thresholdTensor,
+                                       roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "Solarize");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(thresholdTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST Solarize (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "threshold=" + to_string(threshold));
+}
+
+void benchmark_RPP_HOST_Glitch_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0 || !isColor) return;
+
+    int numChannels = 3;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = RpptLayout::NHWC;
+    dstDesc.layout = RpptLayout::NHWC;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptChannelOffsets *rgbOffsets = static_cast<RpptChannelOffsets*>(calloc(batchSize, sizeof(RpptChannelOffsets)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        rgbOffsets[i].r.x = 10;
+        rgbOffsets[i].r.y = 10;
+        rgbOffsets[i].g.x = 0;
+        rgbOffsets[i].g.y = 0;
+        rgbOffsets[i].b.x = 5;
+        rgbOffsets[i].b.y = 5;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_glitch(input, &srcDesc, output, &dstDesc, rgbOffsets,
+                                     roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "Glitch");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(rgbOffsets);
+    free(roiTensor);
+
+    printResult("RPP HOST Glitch (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_JpegCompressionDistortion_Batched(const vector<Mat>& imgs, bool isColor, Rpp32s quality,
+                                                          rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32s *qualityTensor = static_cast<Rpp32s*>(calloc(batchSize, sizeof(Rpp32s)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        qualityTensor[i] = quality;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_jpeg_compression_distortion(input, &srcDesc, output, &dstDesc, qualityTensor,
+                                                          roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "JpegCompressionDistortion");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST JpegCompressionDistortion (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "quality=" + to_string(quality));
+
+    free(input);
+    free(output);
+    free(qualityTensor);
+    free(roiTensor);
+}
+
+void benchmark_RPP_HOST_TensorMin_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u outputLength = isColor ? (batchSize * 4) : batchSize;
+    Rpp8u *minOutputs = static_cast<Rpp8u*>(calloc(outputLength, sizeof(Rpp8u)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_tensor_min(input, &srcDesc, minOutputs, outputLength,
+                                         roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "TensorMin");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(minOutputs);
+    free(roiTensor);
+
+    printResult("RPP HOST TensorMin (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_TensorMax_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u outputLength = isColor ? (batchSize * 4) : batchSize;
+    Rpp8u *maxOutputs = static_cast<Rpp8u*>(calloc(outputLength, sizeof(Rpp8u)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_tensor_max(input, &srcDesc, maxOutputs, outputLength,
+                                         roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "TensorMax");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(maxOutputs);
+    free(roiTensor);
+
+    printResult("RPP HOST TensorMax (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_TensorSum_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u outputLength = isColor ? (batchSize * 4) : batchSize;
+    Rpp64u *sumOutputs = static_cast<Rpp64u*>(calloc(outputLength, sizeof(Rpp64u)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_tensor_sum(input, &srcDesc, sumOutputs, outputLength,
+                                         roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "TensorSum");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(sumOutputs);
+    free(roiTensor);
+
+    printResult("RPP HOST TensorSum (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_TensorMean_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u outputLength = isColor ? (batchSize * 4) : batchSize;
+    Rpp32f *meanOutputs = static_cast<Rpp32f*>(calloc(outputLength, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_tensor_mean(input, &srcDesc, meanOutputs, outputLength,
+                                          roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "TensorMean");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(meanOutputs);
+    free(roiTensor);
+
+    printResult("RPP HOST TensorMean (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_TensorStddev_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u outputLength = isColor ? (batchSize * 4) : batchSize;
+    Rpp32f *stddevOutputs = static_cast<Rpp32f*>(calloc(outputLength, sizeof(Rpp32f)));
+    Rpp32f *meanOutputs = static_cast<Rpp32f*>(calloc(outputLength, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    CHECK_RPP_STATUS(rppt_tensor_mean(input, &srcDesc, meanOutputs, outputLength,
+                                      roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                    "TensorMean");
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_tensor_stddev(input, &srcDesc, stddevOutputs, outputLength, meanOutputs,
+                                            roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "TensorStddev");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(stddevOutputs);
+    free(meanOutputs);
+    free(roiTensor);
+
+    printResult("RPP HOST TensorStddev (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_Threshold_Batched(const vector<Mat>& imgs, bool isColor, float thresh,
+                                          rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = RpptLayout::NCHW;
+    dstDesc.layout = RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *minTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    Rpp32f *maxTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        minTensor[i] = thresh;
+        maxTensor[i] = 255.0f;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        Mat grayImg;
+        if (isColor)
+            cvtColor(imgs[i], grayImg, COLOR_BGR2GRAY);
+        else
+            grayImg = imgs[i];
+
+        for (int row = 0; row < grayImg.rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, grayImg.data + row * grayImg.cols, grayImg.cols);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_threshold(input, &srcDesc, output, &dstDesc, minTensor, maxTensor,
+                                        roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "Threshold");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(minTensor);
+    free(maxTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST Threshold (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "threshold=" + to_string(thresh));
+}
+
+void benchmark_RPP_HOST_WarpAffine_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *affineTensor = static_cast<Rpp32f*>(calloc(batchSize * 6, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        affineTensor[i * 6 + 0] = 1.0f;
+        affineTensor[i * 6 + 1] = 0.1f;
+        affineTensor[i * 6 + 2] = 10.0f;
+        affineTensor[i * 6 + 3] = 0.1f;
+        affineTensor[i * 6 + 4] = 1.0f;
+        affineTensor[i * 6 + 5] = 10.0f;
+
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_warp_affine(input, &srcDesc, output, &dstDesc, affineTensor,
+                                          RpptInterpolationType::BILINEAR, roiTensor,
+                                          RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "WarpAffine");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(affineTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST WarpAffine (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_WarpPerspective_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *perspectiveTensor = static_cast<Rpp32f*>(calloc(batchSize * 9, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        perspectiveTensor[i * 9 + 0] = 1.0f;
+        perspectiveTensor[i * 9 + 1] = 0.1f;
+        perspectiveTensor[i * 9 + 2] = 0.0f;
+        perspectiveTensor[i * 9 + 3] = 0.1f;
+        perspectiveTensor[i * 9 + 4] = 1.0f;
+        perspectiveTensor[i * 9 + 5] = 0.0f;
+        perspectiveTensor[i * 9 + 6] = 0.0f;
+        perspectiveTensor[i * 9 + 7] = 0.0f;
+        perspectiveTensor[i * 9 + 8] = 1.0f;
+
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_warp_perspective(input, &srcDesc, output, &dstDesc, perspectiveTensor,
+                                               RpptInterpolationType::BILINEAR, roiTensor,
+                                               RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "WarpPerspective");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(perspectiveTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST WarpPerspective (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_Fisheye_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_fisheye(input, &srcDesc, output, &dstDesc, roiTensor,
+                                      RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "Fisheye");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST Fisheye (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_LensCorrection_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    Rpp32f *cameraMatrix = static_cast<Rpp32f*>(calloc(batchSize * 9, sizeof(Rpp32f)));
+    Rpp32f *distortionCoeffs = static_cast<Rpp32f*>(calloc(batchSize * 8, sizeof(Rpp32f)));
+
+    for (int i = 0; i < batchSize; i++) {
+        cameraMatrix[i * 9 + 0] = 534.07088364f;
+        cameraMatrix[i * 9 + 1] = 0.0f;
+        cameraMatrix[i * 9 + 2] = 341.53407554f;
+        cameraMatrix[i * 9 + 3] = 0.0f;
+        cameraMatrix[i * 9 + 4] = 534.11914595f;
+        cameraMatrix[i * 9 + 5] = 232.94565259f;
+        cameraMatrix[i * 9 + 6] = 0.0f;
+        cameraMatrix[i * 9 + 7] = 0.0f;
+        cameraMatrix[i * 9 + 8] = 1.0f;
+
+        distortionCoeffs[i * 8 + 0] = -0.29297164f;
+        distortionCoeffs[i * 8 + 1] = 0.10770696f;
+        distortionCoeffs[i * 8 + 2] = 0.00131038f;
+        distortionCoeffs[i * 8 + 3] = -0.0000311f;
+        distortionCoeffs[i * 8 + 4] = 0.0434798f;
+        distortionCoeffs[i * 8 + 5] = 0.0f;
+        distortionCoeffs[i * 8 + 6] = 0.0f;
+        distortionCoeffs[i * 8 + 7] = 0.0f;
+
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    RpptDesc tableDesc = srcDesc;
+    tableDesc.c = 1;
+    tableDesc.strides.nStride = maxHeight * maxWidth;
+    tableDesc.strides.hStride = maxWidth;
+    tableDesc.strides.wStride = 1;
+    tableDesc.strides.cStride = 1;
+
+    Rpp64u tableSize = (Rpp64u)maxHeight * (Rpp64u)maxWidth * (Rpp64u)batchSize;
+    Rpp32f *rowRemapTable = static_cast<Rpp32f*>(calloc(tableSize, sizeof(Rpp32f)));
+    Rpp32f *colRemapTable = static_cast<Rpp32f*>(calloc(tableSize, sizeof(Rpp32f)));
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_lens_correction(input, &srcDesc, output, &dstDesc, rowRemapTable,
+                                              colRemapTable, &tableDesc, cameraMatrix,
+                                              distortionCoeffs, roiTensor, RpptRoiType::XYWH,
+                                              handle, RPP_HOST_BACKEND),
+                        "LensCorrection");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+    free(cameraMatrix);
+    free(distortionCoeffs);
+    free(rowRemapTable);
+    free(colRemapTable);
+
+    printResult("RPP HOST LensCorrection (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_GammaCorrection_Batched(const vector<Mat>& imgs, bool isColor, float gamma,
+                                                rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *gammaTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        gammaTensor[i] = gamma;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_gamma_correction(input, &srcDesc, output, &dstDesc, gammaTensor,
+                                               roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "GammaCorrection");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(gammaTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST GammaCorrection (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "gamma=" + to_string(gamma));
+}
+
+void benchmark_RPP_HOST_Exposure_Batched(const vector<Mat>& imgs, bool isColor, float exposureFactor,
+                                         rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *exposureTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        exposureTensor[i] = exposureFactor;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_exposure(input, &srcDesc, output, &dstDesc, exposureTensor,
+                                       roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "Exposure");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(exposureTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST Exposure (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "factor=" + to_string(exposureFactor));
+}
+
+void benchmark_RPP_HOST_Blend_Batched(const vector<Mat>& imgs, bool isColor, float alpha, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input1 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *input2 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32f *alphaTensor = static_cast<Rpp32f*>(calloc(batchSize, sizeof(Rpp32f)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        alphaTensor[i] = alpha;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr1 = input1 + i * bufferSizePerImage;
+        Rpp8u* imgPtr2 = input2 + i * bufferSizePerImage;
+
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr1 + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+
+        // Create a slightly modified version for input2
+        Mat img2;
+        imgs[i].convertTo(img2, -1, 0.8, 30);
+        for (int row = 0; row < img2.rows; row++) {
+            memcpy(imgPtr2 + row * srcDesc.strides.hStride, img2.data + row * img2.cols * numChannels, img2.cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_blend(input1, input2, &srcDesc, output, &dstDesc, alphaTensor,
+                                    roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND), "Blend");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input1);
+    free(input2);
+    free(output);
+    free(alphaTensor);
+    free(roiTensor);
+
+    printResult("RPP HOST Blend (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "alpha=" + to_string(alpha));
+}
+
+void benchmark_RPP_HOST_Erode_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize,
+                                      rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_erode_host(input, &srcDesc, output, &dstDesc, kernelSize,
+                                        roiTensor, RpptRoiType::XYWH, handle), "Erode");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST Erode (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+}
+
+void benchmark_RPP_HOST_Dilate_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize,
+                                       rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_dilate_host(input, &srcDesc, output, &dstDesc, kernelSize,
+                                          roiTensor, RpptRoiType::XYWH, handle), "Dilate");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST Dilate (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+}
+
+void benchmark_RPP_HOST_BitwiseAnd_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input1 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *input2 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr1 = input1 + i * bufferSizePerImage;
+        Rpp8u* imgPtr2 = input2 + i * bufferSizePerImage;
+
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr1 + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+            memcpy(imgPtr2 + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_bitwise_and(input1, input2, &srcDesc, output, &dstDesc,
+                                          roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "BitwiseAnd");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input1);
+    free(input2);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST BitwiseAnd (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_BitwiseOr_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input1 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *input2 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr1 = input1 + i * bufferSizePerImage;
+        Rpp8u* imgPtr2 = input2 + i * bufferSizePerImage;
+
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr1 + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+            memcpy(imgPtr2 + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_bitwise_or(input1, input2, &srcDesc, output, &dstDesc,
+                                         roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "BitwiseOr");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input1);
+    free(input2);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST BitwiseOr (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_BitwiseNot_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_bitwise_not(input, &srcDesc, output, &dstDesc,
+                                          roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "BitwiseNot");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST BitwiseNot (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+void benchmark_RPP_HOST_BitwiseXor_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input1 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *input2 = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr1 = input1 + i * bufferSizePerImage;
+        Rpp8u* imgPtr2 = input2 + i * bufferSizePerImage;
+
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr1 + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+            memcpy(imgPtr2 + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_bitwise_xor(input1, input2, &srcDesc, output, &dstDesc,
+                                          roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "BitwiseXor");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input1);
+    free(input2);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST BitwiseXor (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
+// ==================== DROPOUT AUGMENTATIONS - BATCHED (WORKING SUBSET) ====================
+
+void benchmark_RPP_HOST_GridDropout_Batched(const vector<Mat>& imgs, bool isColor, int tileWidth, int tileHeight,
+                                           rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    int numBoxesW = maxWidth / tileWidth;
+    int numBoxesH = maxHeight / tileHeight;
+    Rpp32u boxesInEachImage = numBoxesW * numBoxesH;
+
+    // Limit boxes to prevent excessive memory allocation
+    if (boxesInEachImage > 1000) boxesInEachImage = 1000;
+
+    RpptRoiLtrb *anchorBoxInfoTensor = static_cast<RpptRoiLtrb*>(calloc(batchSize * boxesInEachImage, sizeof(RpptRoiLtrb)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    if (!anchorBoxInfoTensor || !roiTensor) {
+        std::cerr << "Failed to allocate memory for GridDropout" << std::endl;
+        if (input) free(input);
+        if (output) free(output);
+        if (anchorBoxInfoTensor) free(anchorBoxInfoTensor);
+        if (roiTensor) free(roiTensor);
+        return;
+    }
+
+    Rpp32u maxHoleW = tileWidth / 2;
+    Rpp32u maxHoleH = tileHeight / 2;
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+
+        int boxIdx = 0;
+        for (int y = 0; y < numBoxesH && boxIdx < (int)boxesInEachImage; y++) {
+            for (int x = 0; x < numBoxesW && boxIdx < (int)boxesInEachImage; x++, boxIdx++) {
+                int idx = i * boxesInEachImage + boxIdx;
+                anchorBoxInfoTensor[idx].lt.x = x * tileWidth;
+                anchorBoxInfoTensor[idx].lt.y = y * tileHeight;
+                anchorBoxInfoTensor[idx].rb.x = (x + 1) * tileWidth;
+                anchorBoxInfoTensor[idx].rb.y = (y + 1) * tileHeight;
+            }
+        }
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_grid_dropout(input, &srcDesc, output, &dstDesc, anchorBoxInfoTensor,
+                                          boxesInEachImage, maxHoleW, maxHoleH, roiTensor,
+                                          RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "GridDropout");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "tileWidth=" << tileWidth << ", tileHeight=" << tileHeight;
+    printResult("RPP HOST GridDropout (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    free(anchorBoxInfoTensor);
+    free(roiTensor);
+}
+
+void benchmark_RPP_HOST_Gridmask_Batched(const vector<Mat>& imgs, bool isColor, int tileWidth, float ratio,
+                                        rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    Rpp32u tileWidthVal = min((Rpp32u)tileWidth, (Rpp32u)min(maxWidth, maxHeight));
+    Rpp32f gridRatio = ratio;
+    Rpp32f gridAngle = 0.5f;
+    RpptUintVector2D translateVector;
+    translateVector.x = 0;
+    translateVector.y = 0;
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_gridmask(input, &srcDesc, output, &dstDesc, tileWidthVal, gridRatio,
+                                      gridAngle, translateVector, roiTensor, RpptRoiType::XYWH,
+                                      handle, RPP_HOST_BACKEND),
+                        "Gridmask");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "tileWidth=" << tileWidth << ", ratio=" << ratio;
+    printResult("RPP HOST Gridmask (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    free(roiTensor);
+}
+
+void benchmark_RPP_HOST_ChannelDropout_Batched(const vector<Mat>& imgs, bool isColor, float dropoutProb,
+                                               rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp8u *dropoutTensor = static_cast<Rpp8u*>(calloc(batchSize * numChannels, sizeof(Rpp8u)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    srand(DROPOUT_FIXED_SEED);
+    for (int i = 0; i < batchSize; i++) {
+        for (int c = 0; c < numChannels; c++) {
+            dropoutTensor[i * numChannels + c] = ((float)rand() / RAND_MAX) > dropoutProb ? 1 : 0;
+        }
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_channel_dropout(input, &srcDesc, output, &dstDesc, dropoutTensor,
+                                             roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "ChannelDropout");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "dropoutProb=" << dropoutProb;
+    printResult("RPP HOST ChannelDropout (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    free(dropoutTensor);
+    free(roiTensor);
+}
+
+void benchmark_RPP_HOST_CutoutDropout_Batched(const vector<Mat>& imgs, bool isColor, int numBoxes,
+                                             rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u totalBoxes = batchSize * numBoxes;
+    RpptRoiLtrb *anchorBoxInfoTensor = static_cast<RpptRoiLtrb*>(calloc(totalBoxes, sizeof(RpptRoiLtrb)));
+    Rpp32u *numOfBoxes = static_cast<Rpp32u*>(calloc(batchSize, sizeof(Rpp32u)));
+    Rpp8u *colorsTensor = static_cast<Rpp8u*>(calloc(totalBoxes * numChannels, sizeof(Rpp8u)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        numOfBoxes[i] = numBoxes;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+
+        for (int j = 0; j < numBoxes; j++) {
+            int idx = i * numBoxes + j;
+            int left = imgs[i].cols / 4;
+            int top = imgs[i].rows / 4;
+            int right = left + imgs[i].cols / 2;
+            int bottom = top + imgs[i].rows / 2;
+
+            anchorBoxInfoTensor[idx].lt.x = left;
+            anchorBoxInfoTensor[idx].lt.y = top;
+            anchorBoxInfoTensor[idx].rb.x = right;
+            anchorBoxInfoTensor[idx].rb.y = bottom;
+
+            for (int c = 0; c < numChannels; c++) {
+                colorsTensor[idx * numChannels + c] = 0;
+            }
+        }
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_cutout_dropout(input, &srcDesc, output, &dstDesc, anchorBoxInfoTensor,
+                                            colorsTensor, numOfBoxes, roiTensor, RpptRoiType::XYWH,
+                                            handle, RPP_HOST_BACKEND),
+                        "CutoutDropout");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "numBoxes=" << numBoxes;
+    printResult("RPP HOST CutoutDropout (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    free(anchorBoxInfoTensor);
+    free(numOfBoxes);
+    free(colorsTensor);
+    free(roiTensor);
+}
+// ==================== REMAINING DROPOUT AUGMENTATIONS ====================
+
+void benchmark_RPP_HOST_Erase_Batched(const vector<Mat>& imgs, bool isColor, int numBoxes,
+                                     rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u totalBoxes = batchSize * numBoxes;
+    RpptRoiLtrb *anchorBoxInfoTensor = static_cast<RpptRoiLtrb*>(calloc(totalBoxes, sizeof(RpptRoiLtrb)));
+    Rpp32u *numBoxesTensor = static_cast<Rpp32u*>(calloc(batchSize, sizeof(Rpp32u)));
+    Rpp8u *colorsTensor = static_cast<Rpp8u*>(calloc(totalBoxes * numChannels, sizeof(Rpp8u)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    // Initialize anchor boxes and colors
+    for (int i = 0; i < batchSize; i++) {
+        numBoxesTensor[i] = numBoxes;
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+
+        for (int j = 0; j < numBoxes; j++) {
+            int idx = i * numBoxes + j;
+            int left = 50 + j * 100;
+            int top = 50 + j * 100;
+            int right = left + 80;
+            int bottom = top + 80;
+
+            anchorBoxInfoTensor[idx].lt.x = left;
+            anchorBoxInfoTensor[idx].lt.y = top;
+            anchorBoxInfoTensor[idx].rb.x = right;
+            anchorBoxInfoTensor[idx].rb.y = bottom;
+
+            // Set erase color to gray (128,128,128)
+            for (int c = 0; c < numChannels; c++) {
+                colorsTensor[idx * numChannels + c] = 128;
+            }
+        }
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_erase(input, &srcDesc, output, &dstDesc, anchorBoxInfoTensor,
+                                   (RppPtr_t)colorsTensor, numBoxesTensor, roiTensor,
+                                   RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "Erase");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "numBoxes=" << numBoxes;
+    printResult("RPP HOST Erase (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    free(anchorBoxInfoTensor);
+    free(numBoxesTensor);
+    free(colorsTensor);
+    free(roiTensor);
+}
+
+void benchmark_RPP_HOST_RandomErase_Batched(const vector<Mat>& imgs, bool isColor, int numBoxes,
+                                           rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u totalBoxes = batchSize * numBoxes;
+    RpptRoiLtrb *anchorBoxInfoTensor = static_cast<RpptRoiLtrb*>(calloc(totalBoxes, sizeof(RpptRoiLtrb)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    // Random erase uses a noise buffer of fixed size
+    Rpp32u noiseBufferSize = RANDOM_ERASE_NOISE_BUFFER_SIDE * RANDOM_ERASE_NOISE_BUFFER_SIDE * numChannels;
+    Rpp8u *noiseBuf = static_cast<Rpp8u*>(calloc(noiseBufferSize, sizeof(Rpp8u)));
+
+    // Fill noise buffer with random values
+    srand(DROPOUT_FIXED_SEED);
+    for (Rpp32u i = 0; i < noiseBufferSize; i++) {
+        noiseBuf[i] = rand() % 256;
+    }
+
+    // Initialize anchor boxes
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+
+        for (int j = 0; j < numBoxes; j++) {
+            int idx = i * numBoxes + j;
+            int left = 50 + j * 100;
+            int top = 50 + j * 100;
+            int right = left + 80;
+            int bottom = top + 80;
+
+            anchorBoxInfoTensor[idx].lt.x = left;
+            anchorBoxInfoTensor[idx].lt.y = top;
+            anchorBoxInfoTensor[idx].rb.x = right;
+            anchorBoxInfoTensor[idx].rb.y = bottom;
+        }
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_random_erase(input, &srcDesc, output, &dstDesc, anchorBoxInfoTensor,
+                                          (RppPtr_t)noiseBuf, roiTensor, RpptRoiType::XYWH,
+                                          handle, RPP_HOST_BACKEND),
+                        "RandomErase");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "numBoxes=" << numBoxes;
+    printResult("RPP HOST RandomErase (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    free(anchorBoxInfoTensor);
+    free(noiseBuf);
+    free(roiTensor);
+}
+
+void benchmark_RPP_HOST_CoarseDropout_Batched(const vector<Mat>& imgs, bool isColor, int dropSize,
+                                             rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    Rpp32u maxBoxesPerImage = 8;
+    RpptRoiLtrb *anchorBoxInfoTensor = static_cast<RpptRoiLtrb*>(calloc(batchSize * maxBoxesPerImage, sizeof(RpptRoiLtrb)));
+    Rpp32u *numBoxesTensor = static_cast<Rpp32u*>(calloc(batchSize, sizeof(Rpp32u)));
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    // Initialize dropout boxes - random locations with dropSize dimensions
+    srand(DROPOUT_FIXED_SEED);
+    for (int i = 0; i < batchSize; i++) {
+        // Randomly determine number of boxes per image (1 to maxBoxesPerImage)
+        numBoxesTensor[i] = 1 + (rand() % maxBoxesPerImage);
+
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+
+        for (Rpp32u j = 0; j < numBoxesTensor[i]; j++) {
+            int idx = i * maxBoxesPerImage + j;
+            // Random positions within image bounds
+            int maxX = max(1, imgs[i].cols - dropSize);
+            int maxY = max(1, imgs[i].rows - dropSize);
+            int left = rand() % maxX;
+            int top = rand() % maxY;
+            int right = min(left + dropSize, imgs[i].cols);
+            int bottom = min(top + dropSize, imgs[i].rows);
+
+            anchorBoxInfoTensor[idx].lt.x = left;
+            anchorBoxInfoTensor[idx].lt.y = top;
+            anchorBoxInfoTensor[idx].rb.x = right;
+            anchorBoxInfoTensor[idx].rb.y = bottom;
+        }
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_coarse_dropout(input, &srcDesc, output, &dstDesc, anchorBoxInfoTensor,
+                                            numBoxesTensor, maxBoxesPerImage, roiTensor,
+                                            RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "CoarseDropout");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "dropSize=" << dropSize;
+    printResult("RPP HOST CoarseDropout (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    free(anchorBoxInfoTensor);
+    free(numBoxesTensor);
+    free(roiTensor);
+}
+
+// Copy Batched (HOST)
+void benchmark_RPP_HOST_Copy_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Set up descriptors with width padding for HOST FIRST
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, height, widthPadded, channels, 0);
+
+    // Allocate HOST buffers using descriptor dimensions (CRITICAL: desc.w is modified by set_descriptor_dims_and_strides)
+    size_t bufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    Rpp8u* input = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+
+    // Fill input buffer from OpenCV Mats using descriptor strides
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+        }
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_copy((RppPtr_t)input, &srcDesc, (RppPtr_t)output, &dstDesc, handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST Copy failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST Copy (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "");
+
+    free(input);
+    free(output);
+}
+
+// Slice Batched (HOST)
+void benchmark_RPP_HOST_Slice_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Allocate HOST buffers
+    Rpp8u* input = (Rpp8u*)calloc(batchSize * height * width * channels, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(batchSize * height * width * channels, sizeof(Rpp8u));
+
+    // Fill input buffer from OpenCV Mats
+    for (int i = 0; i < batchSize; i++) {
+        memcpy(input + i * height * width * channels, imgs[i].data, height * width * channels);
+    }
+
+    // Set up generic descriptors for slice
+    RpptGenericDesc srcGenericDesc, dstGenericDesc;
+    srcGenericDesc.numDims = 4;
+    srcGenericDesc.offsetInBytes = 0;
+    srcGenericDesc.dataType = RpptDataType::U8;
+    srcGenericDesc.dims[0] = batchSize;
+    srcGenericDesc.dims[1] = height;
+    srcGenericDesc.dims[2] = width;
+    srcGenericDesc.dims[3] = channels;
+    srcGenericDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NHWC;
+    for (int i = 0; i < 4; i++) srcGenericDesc.strides[i] = 1;
+    srcGenericDesc.strides[2] = channels;
+    srcGenericDesc.strides[1] = width * channels;
+    srcGenericDesc.strides[0] = height * width * channels;
+
+    dstGenericDesc = srcGenericDesc;
+
+    // BUG FIX: The rppt_slice kernel operates on (numDims-1) dimensional sub-tensors,
+    // excluding the batch dimension. For 4D NHWC tensors, it processes 3D HWC sub-tensors.
+    // Therefore:
+    // - anchorTensor: batchSize * 3 elements (H, W, C anchors, NO batch dimension)
+    // - shapeTensor: batchSize * 3 elements (H, W, C shapes, NO batch dimension)
+    // - roiTensor: batchSize * 6 elements ([H_begin, W_begin, C_begin, H_length, W_length, C_length])
+    //
+    // The previous code incorrectly used 4-element tensors including the batch dimension,
+    // causing out-of-bounds memory access and segmentation faults when batchSize >= 86.
+
+    Rpp32s* anchorTensor = (Rpp32s*)calloc(batchSize * 3, sizeof(Rpp32s));
+    Rpp32s* shapeTensor = (Rpp32s*)calloc(batchSize * 3, sizeof(Rpp32s));
+    for (int i = 0; i < batchSize; i++) {
+        // Slice from (0, 0, 0) in HWC space
+        anchorTensor[i * 3 + 0] = 0;  // height anchor
+        anchorTensor[i * 3 + 1] = 0;  // width anchor
+        anchorTensor[i * 3 + 2] = 0;  // channel anchor
+
+        // Slice the full HWC dimensions (no change to original image)
+        shapeTensor[i * 3 + 0] = height;
+        shapeTensor[i * 3 + 1] = width;
+        shapeTensor[i * 3 + 2] = channels;
+    }
+
+    Rpp8u fillValue = 0;
+    Rpp32u* roiTensor = (Rpp32u*)calloc(batchSize * 6, sizeof(Rpp32u));
+    for (int i = 0; i < batchSize; i++) {
+        // ROI format: [begin_H, begin_W, begin_C, length_H, length_W, length_C]
+        roiTensor[i * 6 + 0] = 0;        // height begin
+        roiTensor[i * 6 + 1] = 0;        // width begin
+        roiTensor[i * 6 + 2] = 0;        // channel begin
+        roiTensor[i * 6 + 3] = height;   // height length
+        roiTensor[i * 6 + 4] = width;    // width length
+        roiTensor[i * 6 + 5] = channels; // channel length
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_slice((RppPtr_t)input, &srcGenericDesc, (RppPtr_t)output, &dstGenericDesc,
+                                      anchorTensor, shapeTensor, (RppPtr_t)&fillValue, false, roiTensor,
+                                      handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST Slice failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST Slice (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "");
+
+    free(input);
+    free(output);
+    free(anchorTensor);
+    free(shapeTensor);
+    free(roiTensor);
+}
+
+// ChannelPermute Batched (HOST)
+void benchmark_RPP_HOST_ChannelPermute_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    // ChannelPermute requires 3 channels
+    if (!isColor) {
+        cout << "RPP HOST ChannelPermute (Batched) - Skipped (requires RGB images)" << endl;
+        return;
+    }
+
+    int batchSize = imgs.size();
+    int channels = 3;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Set up descriptors with width padding for HOST FIRST
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = RpptLayout::NHWC;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = RpptLayout::NHWC;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, height, widthPadded, channels, 0);
+
+    // Allocate HOST buffers using descriptor dimensions (CRITICAL: desc.w is modified by set_descriptor_dims_and_strides)
+    size_t bufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    Rpp8u* input = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+
+    // Fill input buffer from OpenCV Mats using descriptor strides
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+        }
+    }
+
+    // Permutation tensor: BGR to RGB (2,1,0)
+    Rpp32u* permutationTensor = new Rpp32u[batchSize * 3];
+    for (int i = 0; i < batchSize; i++) {
+        permutationTensor[i * 3 + 0] = 2;  // B channel
+        permutationTensor[i * 3 + 1] = 1;  // G channel
+        permutationTensor[i * 3 + 2] = 0;  // R channel
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_channel_permute((RppPtr_t)input, &srcDesc, (RppPtr_t)output, &dstDesc,
+                                                permutationTensor, handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST ChannelPermute failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    if (isColor) params << "permutation=BGR->RGB";
+    printResult("RPP HOST ChannelPermute (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    delete[] permutationTensor;
+}
+
+// Transpose Batched (HOST)
+void benchmark_RPP_HOST_Transpose_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Allocate HOST buffers
+    Rpp8u* input = (Rpp8u*)calloc(batchSize * height * width * channels, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(batchSize * width * height * channels, sizeof(Rpp8u));
+
+    // Fill input buffer from OpenCV Mats
+    for (int i = 0; i < batchSize; i++) {
+        memcpy(input + i * height * width * channels, imgs[i].data, height * width * channels);
+    }
+
+    // Set up generic descriptors for transpose
+    RpptGenericDesc srcGenericDesc, dstGenericDesc;
+    srcGenericDesc.numDims = 4;
+    srcGenericDesc.offsetInBytes = 0;
+    srcGenericDesc.dataType = RpptDataType::U8;
+    srcGenericDesc.dims[0] = batchSize;
+    srcGenericDesc.dims[1] = height;
+    srcGenericDesc.dims[2] = width;
+    srcGenericDesc.dims[3] = channels;
+    srcGenericDesc.layout = RpptLayout::NHWC;
+    srcGenericDesc.strides[3] = 1;
+    srcGenericDesc.strides[2] = channels;
+    srcGenericDesc.strides[1] = width * channels;
+    srcGenericDesc.strides[0] = height * width * channels;
+
+    // Destination has swapped H and W dimensions
+    dstGenericDesc.numDims = 4;
+    dstGenericDesc.offsetInBytes = 0;
+    dstGenericDesc.dataType = RpptDataType::U8;
+    dstGenericDesc.dims[0] = batchSize;
+    dstGenericDesc.dims[1] = width;   // swapped
+    dstGenericDesc.dims[2] = height;  // swapped
+    dstGenericDesc.dims[3] = channels;
+    dstGenericDesc.layout = RpptLayout::NHWC;
+    dstGenericDesc.strides[3] = 1;
+    dstGenericDesc.strides[2] = channels;
+    dstGenericDesc.strides[1] = height * channels;  // swapped stride
+    dstGenericDesc.strides[0] = width * height * channels;
+
+    // Permutation tensor: swap H and W axes (0,2,1,3)
+    Rpp32u permTensor[4] = {0, 2, 1, 3};
+
+    // CRITICAL: ROI tensor must have 8 values per image for 4D transpose!
+    // Format: [n_start, h_start, w_start, c_start, n_size, h_size, w_size, c_size]
+    Rpp32u* roiTensor = (Rpp32u*)calloc(batchSize * 8, sizeof(Rpp32u));
+    for (int i = 0; i < batchSize; i++) {
+        int idx = i * 8;
+        roiTensor[idx + 0] = 0;         // n_start
+        roiTensor[idx + 1] = 0;         // h_start
+        roiTensor[idx + 2] = 0;         // w_start
+        roiTensor[idx + 3] = 0;         // c_start
+        roiTensor[idx + 4] = 1;         // n_size (process 1 image at a time)
+        roiTensor[idx + 5] = height;    // h_size
+        roiTensor[idx + 6] = width;     // w_size
+        roiTensor[idx + 7] = channels;  // c_size
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_transpose((RppPtr_t)input, &srcGenericDesc, (RppPtr_t)output, &dstGenericDesc,
+                                          permTensor, roiTensor, handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST Transpose failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "permutation=0,2,1,3";
+    printResult("RPP HOST Transpose (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(input);
+    free(output);
+    free(roiTensor);
+}
+// LUT Batched (HOST)
+void benchmark_RPP_HOST_LUT_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Set up descriptors with width padding for HOST
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, height, widthPadded, channels, 0);
+
+    // Allocate HOST buffers using descriptor dimensions
+    size_t bufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    Rpp8u* input = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+
+    // Fill input buffer from OpenCV Mats using descriptor strides
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+        }
+    }
+
+    // Create LUT - simple inversion table
+    Rpp8u lut[256];
+    for (int i = 0; i < 256; i++) lut[i] = 255 - i;
+
+    // Setup ROI
+    RpptROI* roiTensorPtrSrc = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+    for (int i = 0; i < batchSize; i++) {
+        roiTensorPtrSrc[i].xywhROI.xy.x = 0;
+        roiTensorPtrSrc[i].xywhROI.xy.y = 0;
+        roiTensorPtrSrc[i].xywhROI.roiWidth = width;
+        roiTensorPtrSrc[i].xywhROI.roiHeight = height;
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_lut((RppPtr_t)input, &srcDesc, (RppPtr_t)output, &dstDesc,
+                                    lut, roiTensorPtrSrc, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST LUT failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST LUT (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "");
+
+    free(input);
+    free(output);
+    free(roiTensorPtrSrc);
+}
+
+// Magnitude Batched (HOST)
+void benchmark_RPP_HOST_Magnitude_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Set up descriptors with width padding for HOST
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, height, widthPadded, channels, 0);
+
+    // Allocate HOST buffers
+    size_t bufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    Rpp8u* input1 = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* input2 = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+
+    // Fill input buffers (simulating gradient X and Y)
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input1 + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+            memcpy(input2 + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+        }
+    }
+
+    // Setup ROI
+    RpptROI* roiTensorPtrSrc = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+    for (int i = 0; i < batchSize; i++) {
+        roiTensorPtrSrc[i].xywhROI.xy.x = 0;
+        roiTensorPtrSrc[i].xywhROI.xy.y = 0;
+        roiTensorPtrSrc[i].xywhROI.roiWidth = width;
+        roiTensorPtrSrc[i].xywhROI.roiHeight = height;
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_magnitude((RppPtr_t)input1, (RppPtr_t)input2, &srcDesc,
+                                          (RppPtr_t)output, &dstDesc,
+                                          roiTensorPtrSrc, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST Magnitude failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST Magnitude (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "");
+
+    free(input1);
+    free(input2);
+    free(output);
+    free(roiTensorPtrSrc);
+}
+
+// FusedMultiplyAddScalar Batched (HOST)
+void benchmark_RPP_HOST_FusedMultiplyAddScalar_Batched(const vector<Mat>& imgs, bool isColor,
+                                                        float mulVal, float addVal, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Set up 5D generic descriptors (NDHWC with depth=1 for 2D images)
+    RpptGenericDesc srcDesc, dstDesc;
+    int layoutType = isColor ? 1 : 0;  // 1=NDHWC, 0=NCDHW
+    set_generic_descriptor(&srcDesc, batchSize, width, height, 1, channels, 0, layoutType);
+    set_generic_descriptor(&dstDesc, batchSize, width, height, 1, channels, 0, layoutType);
+
+    // Allocate HOST buffers (F32 required for fused_multiply_add_scalar)
+    size_t bufferSize = (size_t)batchSize * height * width * channels;
+    Rpp32f* inputF32 = (Rpp32f*)calloc(bufferSize, sizeof(Rpp32f));
+    Rpp32f* outputF32 = (Rpp32f*)calloc(bufferSize, sizeof(Rpp32f));
+
+    // Fill input buffer - convert U8 to F32
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            for (int w = 0; w < width; w++) {
+                for (int c = 0; c < channels; c++) {
+                    int idx = i * height * width * channels + h * width * channels + w * channels + c;
+                    inputF32[idx] = (Rpp32f)imgs[i].data[h * width * channels + w * channels + c];
+                }
+            }
+        }
+    }
+
+    // Setup mul and add tensors
+    Rpp32f* mulTensor = (Rpp32f*)calloc(batchSize, sizeof(Rpp32f));
+    Rpp32f* addTensor = (Rpp32f*)calloc(batchSize, sizeof(Rpp32f));
+    for (int i = 0; i < batchSize; i++) {
+        mulTensor[i] = mulVal;
+        addTensor[i] = addVal;
+    }
+
+    // Setup ROI3D
+    RpptROI3D* roiTensorPtrSrc = (RpptROI3D*)calloc(batchSize, sizeof(RpptROI3D));
+    for (int i = 0; i < batchSize; i++) {
+        roiTensorPtrSrc[i].xyzwhdROI.xyz.x = 0;
+        roiTensorPtrSrc[i].xyzwhdROI.xyz.y = 0;
+        roiTensorPtrSrc[i].xyzwhdROI.xyz.z = 0;
+        roiTensorPtrSrc[i].xyzwhdROI.roiWidth = width;
+        roiTensorPtrSrc[i].xyzwhdROI.roiHeight = height;
+        roiTensorPtrSrc[i].xyzwhdROI.roiDepth = 1;
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_fused_multiply_add_scalar((RppPtr_t)inputF32, &srcDesc,
+                                                           (RppPtr_t)outputF32, &dstDesc,
+                                                           mulTensor, addTensor,
+                                                           roiTensorPtrSrc, RpptRoi3DType::XYZWHD,
+                                                           handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST FusedMultiplyAddScalar failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "mul=" << mulVal << ",add=" << addVal;
+    printResult("RPP HOST FusedMultiplyAddScalar (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
+
+    free(inputF32);
+    free(outputF32);
+    free(mulTensor);
+    free(addTensor);
+    free(roiTensorPtrSrc);
+}
+
+// Remap Batched (HOST)
+void benchmark_RPP_HOST_Remap_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Set up descriptors with width padding for HOST
+    RpptDesc srcDesc, dstDesc, tableDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, height, widthPadded, channels, 0);
+
+    // Allocate HOST buffers
+    size_t bufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    Rpp8u* input = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+
+    // Fill input buffer
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+        }
+    }
+
+    // Setup ROI
+    RpptROI* roiTensorPtrSrc = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+    for (int i = 0; i < batchSize; i++) {
+        roiTensorPtrSrc[i].xywhROI.xy.x = 0;
+        roiTensorPtrSrc[i].xywhROI.xy.y = 0;
+        roiTensorPtrSrc[i].xywhROI.roiWidth = width;
+        roiTensorPtrSrc[i].xywhROI.roiHeight = height;
+    }
+
+    // Allocate and initialize remap tables (use padded width from descriptor)
+    size_t tableSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w;
+    Rpp32f* rowRemapTable = (Rpp32f*)calloc(tableSize, sizeof(Rpp32f));
+    Rpp32f* colRemapTable = (Rpp32f*)calloc(tableSize, sizeof(Rpp32f));
+
+    // Setup table descriptor using init_remap helper
+    tableDesc = srcDesc;
+    init_remap(&tableDesc, &srcDesc, roiTensorPtrSrc, rowRemapTable, colRemapTable);
+
+    RpptInterpolationType interpolationType = RpptInterpolationType::BILINEAR;
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_remap((RppPtr_t)input, &srcDesc, (RppPtr_t)output, &dstDesc,
+                                      rowRemapTable, colRemapTable, &tableDesc, interpolationType,
+                                      roiTensorPtrSrc, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST Remap failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST Remap (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "interpolation=bilinear");
+
+    free(input);
+    free(output);
+    free(rowRemapTable);
+    free(colRemapTable);
+    free(roiTensorPtrSrc);
+}
+
+// Phase Batched (HOST)
+void benchmark_RPP_HOST_Phase_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Set up descriptors with width padding for HOST
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, height, widthPadded, channels, 0);
+
+    // Allocate HOST buffers
+    size_t bufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    Rpp8u* input1 = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* input2 = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+
+    // Fill input buffers
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input1 + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+            // Create second input (shifted for phase calculation)
+            for (int w = 0; w < width * channels; w++) {
+                input2[i * srcDesc.strides.nStride + h * srcDesc.strides.hStride + w] =
+                    imgs[i].data[h * width * channels + w] >> 1;
+            }
+        }
+    }
+
+    // Setup ROI
+    RpptROI* roiTensorPtrSrc = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+    for (int i = 0; i < batchSize; i++) {
+        roiTensorPtrSrc[i].xywhROI.xy.x = 0;
+        roiTensorPtrSrc[i].xywhROI.xy.y = 0;
+        roiTensorPtrSrc[i].xywhROI.roiWidth = width;
+        roiTensorPtrSrc[i].xywhROI.roiHeight = height;
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_phase((RppPtr_t)input1, (RppPtr_t)input2, &srcDesc,
+                                      (RppPtr_t)output, &dstDesc,
+                                      roiTensorPtrSrc, RpptRoiType::XYWH,
+                                      handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST Phase failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST Phase (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+
+    free(input1);
+    free(input2);
+    free(output);
+    free(roiTensorPtrSrc);
+}
+
+// Normalize Batched (HOST)
+void benchmark_RPP_HOST_Normalize_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+    int nDim = 3;  // 3D per-image: H, W, C
+
+    // Create generic descriptor for 4D tensor (NHWC)
+    RpptGenericDesc genericDesc;
+    genericDesc.numDims = nDim + 1;  // 4D: N, H, W, C
+    genericDesc.offsetInBytes = 0;
+    genericDesc.dataType = RpptDataType::U8;
+    genericDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    genericDesc.dims[0] = batchSize;   // N (batch)
+    genericDesc.dims[1] = height;      // H
+    genericDesc.dims[2] = width;       // W
+    genericDesc.dims[3] = channels;    // C
+
+    // Compute strides for NHWC layout
+    genericDesc.strides[3] = 1;                          // C stride
+    genericDesc.strides[2] = channels;                   // W stride
+    genericDesc.strides[1] = width * channels;           // H stride
+    genericDesc.strides[0] = height * width * channels;  // N stride
+
+    // axisMask: normalize over H and W (bit 0=H, bit 1=W)
+    Rpp32u axisMask = 3;
+
+    // Allocate mean and stddev tensors (one per channel per image)
+    Rpp32u meanStddevSize = batchSize * channels;
+    Rpp32f* meanTensor = (Rpp32f*)calloc(meanStddevSize, sizeof(Rpp32f));
+    Rpp32f* stdDevTensor = (Rpp32f*)calloc(meanStddevSize, sizeof(Rpp32f));
+
+    // computeMeanStddev: 3 = compute both mean and stddev internally
+    Rpp8u computeMeanStddev = 3;
+
+    // Scale and shift for normalization
+    Rpp32f scale = 1.0f;
+    Rpp32f shift = 0.0f;
+
+    // ROI tensor: nDim * 2 values per batch item
+    Rpp32u* roiTensor = (Rpp32u*)calloc(batchSize * nDim * 2, sizeof(Rpp32u));
+    for (int i = 0; i < batchSize; i++) {
+        int idx = i * (nDim * 2);
+        roiTensor[idx + 0] = 0;         // h_start
+        roiTensor[idx + 1] = 0;         // w_start
+        roiTensor[idx + 2] = 0;         // c_start
+        roiTensor[idx + 3] = height;    // h_size
+        roiTensor[idx + 4] = width;     // w_size
+        roiTensor[idx + 5] = channels;  // c_size
+    }
+
+    // Allocate input/output buffers
+    size_t imageSize = height * width * channels;
+    Rpp8u* inputBuffer = (Rpp8u*)calloc(batchSize * imageSize, sizeof(Rpp8u));
+    Rpp8u* outputBuffer = (Rpp8u*)calloc(batchSize * imageSize, sizeof(Rpp8u));
+
+    for (int i = 0; i < batchSize; i++)
+        memcpy(inputBuffer + i * imageSize, imgs[i].data, imageSize);
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_normalize((RppPtr_t)inputBuffer, &genericDesc,
+                                          (RppPtr_t)outputBuffer, &genericDesc,
+                                          axisMask, meanTensor, stdDevTensor, computeMeanStddev,
+                                          scale, shift, roiTensor,
+                                          handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST Normalize failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST Normalize (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+
+    free(inputBuffer);
+    free(outputBuffer);
+    free(meanTensor);
+    free(stdDevTensor);
+    free(roiTensor);
+}
+
+// CropAndPatch Batched (HOST)
+void benchmark_RPP_HOST_CropAndPatch_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    if (batchSize < 2) {
+        cout << "CropAndPatch requires at least 2 images. Skipping." << endl;
+        return;
+    }
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Set up descriptors with width padding for HOST
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, height, widthPadded, channels, 0);
+
+    // Allocate HOST buffers
+    size_t bufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    Rpp8u* input1 = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* input2 = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(bufferSize, sizeof(Rpp8u));
+
+    // Fill input buffers
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input1 + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+            // Use next image for second input (wraparound)
+            int nextIdx = (i + 1) % batchSize;
+            memcpy(input2 + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[nextIdx].data + h * width * channels,
+                   width * channels);
+        }
+    }
+
+    // Setup ROIs
+    RpptROI* dstRoiTensor = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+    RpptROI* cropRoiTensor = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+    RpptROI* patchRoiTensor = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+
+    for (int i = 0; i < batchSize; i++) {
+        // Full image output
+        dstRoiTensor[i].xywhROI.xy.x = 0;
+        dstRoiTensor[i].xywhROI.xy.y = 0;
+        dstRoiTensor[i].xywhROI.roiWidth = width;
+        dstRoiTensor[i].xywhROI.roiHeight = height;
+
+        // Crop region (center quarter)
+        cropRoiTensor[i].xywhROI.xy.x = width / 4;
+        cropRoiTensor[i].xywhROI.xy.y = height / 4;
+        cropRoiTensor[i].xywhROI.roiWidth = width / 2;
+        cropRoiTensor[i].xywhROI.roiHeight = height / 2;
+
+        // Patch region (same as crop)
+        patchRoiTensor[i] = cropRoiTensor[i];
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_crop_and_patch((RppPtr_t)input1, (RppPtr_t)input2, &srcDesc,
+                                               (RppPtr_t)output, &dstDesc,
+                                               dstRoiTensor, cropRoiTensor, patchRoiTensor,
+                                               RpptRoiType::XYWH, handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST CropAndPatch failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST CropAndPatch (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "center_quarter");
+
+    free(input1);
+    free(input2);
+    free(output);
+    free(dstRoiTensor);
+    free(cropRoiTensor);
+    free(patchRoiTensor);
+}
+
+// CropMirrorNormalize Batched (HOST)
+void benchmark_RPP_HOST_CropMirrorNormalize_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Output is cropped to half
+    int dstHeight = height / 2;
+    int dstWidth = width / 2;
+
+    // Set up descriptors
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    int dstWidthPadded = ((dstWidth / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, dstHeight, dstWidthPadded, channels, 0);
+
+    // Allocate buffers
+    size_t srcBufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    size_t dstBufferSize = (size_t)dstDesc.n * dstDesc.h * dstDesc.w * dstDesc.c;
+    Rpp8u* input = (Rpp8u*)calloc(srcBufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(dstBufferSize, sizeof(Rpp8u));
+
+    // Fill input buffer
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+        }
+    }
+
+    // Normalization parameters
+    Rpp32f* offsetTensor = (Rpp32f*)calloc(batchSize * channels, sizeof(Rpp32f));
+    Rpp32f* multiplierTensor = (Rpp32f*)calloc(batchSize * channels, sizeof(Rpp32f));
+    Rpp32u* mirrorTensor = (Rpp32u*)calloc(batchSize, sizeof(Rpp32u));
+
+    if (isColor) {
+        Rpp32f mean[3] = {60.0f, 80.0f, 100.0f};
+        Rpp32f stdDev[3] = {0.9f, 0.9f, 0.9f};
+        for (int i = 0; i < batchSize; i++) {
+            for (int c = 0; c < 3; c++) {
+                offsetTensor[i * 3 + c] = -mean[c] / stdDev[c];
+                multiplierTensor[i * 3 + c] = 1.0f / stdDev[c];
+            }
+            mirrorTensor[i] = 1;  // Horizontal flip
+        }
+    } else {
+        Rpp32f mean = 100.0f;
+        Rpp32f stdDev = 0.9f;
+        for (int i = 0; i < batchSize; i++) {
+            offsetTensor[i] = -mean / stdDev;
+            multiplierTensor[i] = 1.0f / stdDev;
+            mirrorTensor[i] = 1;
+        }
+    }
+
+    // Setup crop ROI
+    RpptROI* cropRoiTensor = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+    for (int i = 0; i < batchSize; i++) {
+        cropRoiTensor[i].xywhROI.xy.x = width / 4;
+        cropRoiTensor[i].xywhROI.xy.y = height / 4;
+        cropRoiTensor[i].xywhROI.roiWidth = dstWidth;
+        cropRoiTensor[i].xywhROI.roiHeight = dstHeight;
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_crop_mirror_normalize((RppPtr_t)input, &srcDesc,
+                                                      (RppPtr_t)output, &dstDesc,
+                                                      offsetTensor, multiplierTensor, mirrorTensor,
+                                                      cropRoiTensor, RpptRoiType::XYWH,
+                                                      handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST CropMirrorNormalize failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST CropMirrorNormalize (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "crop_half+flip+normalize");
+
+    free(input);
+    free(output);
+    free(offsetTensor);
+    free(multiplierTensor);
+    free(mirrorTensor);
+    free(cropRoiTensor);
+}
+
+// ResizeMirrorNormalize Batched (HOST)
+void benchmark_RPP_HOST_ResizeMirrorNormalize_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Resize to half
+    int dstHeight = height / 2;
+    int dstWidth = width / 2;
+
+    // Set up descriptors
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    int dstWidthPadded = ((dstWidth / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, dstHeight, dstWidthPadded, channels, 0);
+
+    // Allocate buffers
+    size_t srcBufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    size_t dstBufferSize = (size_t)dstDesc.n * dstDesc.h * dstDesc.w * dstDesc.c;
+    Rpp8u* input = (Rpp8u*)calloc(srcBufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(dstBufferSize, sizeof(Rpp8u));
+
+    // Fill input buffer
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+        }
+    }
+
+    // Destination image sizes
+    RpptImagePatch* dstImgSizes = (RpptImagePatch*)calloc(batchSize, sizeof(RpptImagePatch));
+    for (int i = 0; i < batchSize; i++) {
+        dstImgSizes[i].width = dstWidth;
+        dstImgSizes[i].height = dstHeight;
+    }
+
+    // Normalization parameters
+    Rpp32f* meanTensor = (Rpp32f*)calloc(batchSize * channels, sizeof(Rpp32f));
+    Rpp32f* stdDevTensor = (Rpp32f*)calloc(batchSize * channels, sizeof(Rpp32f));
+    Rpp32u* mirrorTensor = (Rpp32u*)calloc(batchSize, sizeof(Rpp32u));
+
+    for (int i = 0; i < batchSize; i++) {
+        if (isColor) {
+            meanTensor[i * 3 + 0] = 60.0f;
+            meanTensor[i * 3 + 1] = 80.0f;
+            meanTensor[i * 3 + 2] = 100.0f;
+            stdDevTensor[i * 3 + 0] = 1.0f;
+            stdDevTensor[i * 3 + 1] = 1.0f;
+            stdDevTensor[i * 3 + 2] = 1.0f;
+        } else {
+            meanTensor[i] = 100.0f;
+            stdDevTensor[i] = 1.0f;
+        }
+        mirrorTensor[i] = 1;  // Horizontal flip
+    }
+
+    // Setup ROI
+    RpptROI* roiTensor = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = dstWidth;
+        roiTensor[i].xywhROI.roiHeight = dstHeight;
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_resize_mirror_normalize((RppPtr_t)input, &srcDesc,
+                                                        (RppPtr_t)output, &dstDesc,
+                                                        dstImgSizes, RpptInterpolationType::BILINEAR,
+                                                        meanTensor, stdDevTensor, mirrorTensor,
+                                                        roiTensor, RpptRoiType::XYWH,
+                                                        handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST ResizeMirrorNormalize failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST ResizeMirrorNormalize (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "resize_half+flip+normalize");
+
+    free(input);
+    free(output);
+    free(dstImgSizes);
+    free(meanTensor);
+    free(stdDevTensor);
+    free(mirrorTensor);
+    free(roiTensor);
+}
+
+// ResizeCropMirror Batched (HOST)
+void benchmark_RPP_HOST_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = imgs.size();
+    int channels = isColor ? 3 : 1;
+    int height = imgs[0].rows;
+    int width = imgs[0].cols;
+
+    // Final output size after resize and crop
+    int finalSize = 50;
+
+    // Set up descriptors
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.dataType = RpptDataType::U8;
+    int widthPadded = ((width / 8) * 8) + 8;
+    int dstWidthPadded = ((finalSize / 8) * 8) + 8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, finalSize, dstWidthPadded, channels, 0);
+
+    // Allocate buffers
+    size_t srcBufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
+    size_t dstBufferSize = (size_t)dstDesc.n * dstDesc.h * dstDesc.w * dstDesc.c;
+    Rpp8u* input = (Rpp8u*)calloc(srcBufferSize, sizeof(Rpp8u));
+    Rpp8u* output = (Rpp8u*)calloc(dstBufferSize, sizeof(Rpp8u));
+
+    // Fill input buffer
+    for (int i = 0; i < batchSize; i++) {
+        for (int h = 0; h < height; h++) {
+            memcpy(input + i * srcDesc.strides.nStride + h * srcDesc.strides.hStride,
+                   imgs[i].data + h * width * channels,
+                   width * channels);
+        }
+    }
+
+    // Resize target size
+    RpptImagePatch* dstImgSizes = (RpptImagePatch*)calloc(batchSize, sizeof(RpptImagePatch));
+    for (int i = 0; i < batchSize; i++) {
+        dstImgSizes[i].width = (width - 20) / 2;
+        dstImgSizes[i].height = (height - 20) / 2;
+    }
+
+    // Mirror flag
+    Rpp32u* mirrorTensor = (Rpp32u*)calloc(batchSize, sizeof(Rpp32u));
+    for (int i = 0; i < batchSize; i++) {
+        mirrorTensor[i] = 1;  // Horizontal flip
+    }
+
+    // Setup ROIs
+    RpptROI* dstRoiTensor = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
+    for (int i = 0; i < batchSize; i++) {
+        dstRoiTensor[i].xywhROI.roiWidth = finalSize;
+        dstRoiTensor[i].xywhROI.roiHeight = finalSize;
+    }
+
+    // Benchmark loop
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_RUNS; i++) {
+        RppStatus status = rppt_resize_crop_mirror((RppPtr_t)input, &srcDesc,
+                                                   (RppPtr_t)output, &dstDesc,
+                                                   dstImgSizes, RpptInterpolationType::BILINEAR,
+                                                   mirrorTensor, dstRoiTensor, RpptRoiType::XYWH,
+                                                   handle, RPP_HOST_BACKEND);
+        CHECK_RPP_STATUS(status, "RPP HOST ResizeCropMirror failed with status");
+    }
+    auto end = high_resolution_clock::now();
+
+    printResult("RPP HOST ResizeCropMirror (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "resize+crop+flip");
+
+    free(input);
+    free(output);
+    free(dstImgSizes);
+    free(mirrorTensor);
+    free(dstRoiTensor);
+}
