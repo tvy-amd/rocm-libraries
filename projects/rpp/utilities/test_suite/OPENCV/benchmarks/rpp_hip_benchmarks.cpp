@@ -4836,13 +4836,19 @@ void benchmark_RPP_HIP_Gridmask(const vector<Mat>& imgs, bool isColor, int tileW
 
         for (int row = 0; row < imgs[i].rows; ++row) {
             memcpy(h_tempBuffer + row * alignedWidth * numChannels,
-                   imgs[i].data + row * elementsPerRow,
-                   elementsPerRow * sizeof(Rpp8u));
+                       imgs[i].data + row * elementsPerRow,
+                       elementsPerRow * sizeof(Rpp8u));
         }
 
         CHECK_HIP_STATUS(hipMemcpy(d_inputs[i], h_tempBuffer, alignedBufferSize, hipMemcpyHostToDevice));
         delete[] h_tempBuffer;
     }
+
+    // CRITICAL FIX: Clear any pending HIP errors from previous operations before calling rppt_gridmask
+    // The HIP_CHECK_LAUNCH_RETURN() macro in gridmask.cpp picks up stale errors from earlier HIP calls
+    // Synchronize to ensure all previous operations complete, then clear the error state
+    CHECK_HIP_STATUS(hipStreamSynchronize(stream));
+    (void)hipGetLastError();
 
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
@@ -11226,12 +11232,13 @@ void benchmark_RPP_HIP_LUT_Batched(const vector<Mat>& imgs, bool isColor, rppHan
     CHECK_HIP_STATUS(hipHostMalloc(&srcDesc, sizeof(RpptDesc)));
     CHECK_HIP_STATUS(hipHostMalloc(&dstDesc, sizeof(RpptDesc)));
 
-    set_descriptor_dims_and_strides_local(srcDesc, batchSize, height, width, channels, 0);
     srcDesc->layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
     srcDesc->dataType = RpptDataType::U8;
-    set_descriptor_dims_and_strides_local(dstDesc, batchSize, height, width, channels, 0);
+    set_descriptor_dims_and_strides(srcDesc, batchSize, height, width, channels, 0);
+
     dstDesc->layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
     dstDesc->dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(dstDesc, batchSize, height, width, channels, 0);
 
     // Setup ROI in pinned memory
     RpptROI* roiTensorPtrSrc;
@@ -11293,12 +11300,13 @@ void benchmark_RPP_HIP_Magnitude_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipHostMalloc(&srcDesc, sizeof(RpptDesc)));
     CHECK_HIP_STATUS(hipHostMalloc(&dstDesc, sizeof(RpptDesc)));
 
-    set_descriptor_dims_and_strides_local(srcDesc, batchSize, height, width, channels, 0);
     srcDesc->layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
     srcDesc->dataType = RpptDataType::U8;
-    set_descriptor_dims_and_strides_local(dstDesc, batchSize, height, width, channels, 0);
+    set_descriptor_dims_and_strides(srcDesc, batchSize, height, width, channels, 0);
+
     dstDesc->layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
     dstDesc->dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(dstDesc, batchSize, height, width, channels, 0);
 
     // Setup ROI in pinned memory
     RpptROI* roiTensorPtrSrc;

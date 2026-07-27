@@ -107,6 +107,38 @@ int main(int argc, char* argv[]) {
         cout << "Auto-detected " << NUM_THREADS << " available threads" << endl;
     }
 
+    // Control OpenCV threading to match RPP HOST configuration for fair comparison
+    cv::setNumThreads(NUM_THREADS);
+
+    int batchSizeGray = 0, maxWidthGray = 0, maxHeightGray = 0;
+    int batchSizeRGB = 0, maxWidthRGB = 0, maxHeightRGB = 0;
+
+    vector<Mat> imgsGray =
+        loadBatchImages(GRAY_IMAGE_PATH, batchSizeGray, maxWidthGray, maxHeightGray, false);
+    vector<Mat> imgsRGB =
+        loadBatchImages(RGB_IMAGE_PATH, batchSizeRGB, maxWidthRGB, maxHeightRGB, true);
+
+    if (imgsGray.empty() && imgsRGB.empty()) {
+        cerr << "No images found in the dataset directories!" << endl;
+        return -1;
+    }
+
+    // Initialize global image metadata for Excel output
+    if (!imgsGray.empty()) {
+        ostringstream oss;
+        oss << maxWidthGray << "x" << maxHeightGray;
+        grayImageSize = oss.str();
+        grayImageDtype = getDtypeString(imgsGray[0].type());
+        grayBatchSize = batchSizeGray;
+    }
+    if (!imgsRGB.empty()) {
+        ostringstream oss;
+        oss << maxWidthRGB << "x" << maxHeightRGB;
+        rgbImageSize = oss.str();
+        rgbImageDtype = getDtypeString(imgsRGB[0].type());
+        rgbBatchSize = batchSizeRGB;
+    }
+
     // For Single image processing benchmarking
     // Initialize RPP HOST backend handle
     rppHandle_t handleHost;
@@ -136,12 +168,18 @@ int main(int argc, char* argv[]) {
     }
 
     // For Batched images processing benchmarking
+    // Use maximum batch size to handle both grayscale and RGB images
+    int maxBatchSize = max(batchSizeGray, batchSizeRGB);
+
     // Initialize RPP HOST backend handle
     rppHandle_t handleHostBatched;
-    status = rppCreate(&handleHostBatched, 1, maxAvailableThreads, nullptr, RPP_HOST_BACKEND);
+    status = rppCreate(&handleHostBatched, maxBatchSize, maxAvailableThreads, nullptr, RPP_HOST_BACKEND);
     if (status != rppStatusSuccess) {
-        cerr << "Error: Failed to initialize Batched RPP HOST handle with " << maxAvailableThreads
-             << " threads (Status: " << status << ")" << endl;
+        cerr << "Error: Failed to initialize Batched RPP HOST handle with batch size " << maxBatchSize
+             << " and " << maxAvailableThreads << " threads (Status: " << status << ")" << endl;
+        rppDestroy(handleHost, RPP_HOST_BACKEND);
+        rppDestroy(handleHip, RPP_HIP_BACKEND);
+        (void)hipStreamDestroy(stream);
         return 1;
     }
 
@@ -150,51 +188,23 @@ int main(int argc, char* argv[]) {
     hipStream_t streamBatched;
     hipErr = hipStreamCreate(&streamBatched);
     if (hipErr != hipSuccess) {
-        cerr << "Error: Failed to create HIP stream (Error: " << hipErr << ")" << endl;
+        cerr << "Error: Failed to create batched HIP stream (Error: " << hipErr << ")" << endl;
         rppDestroy(handleHostBatched, RPP_HOST_BACKEND);
-        return 1;
-    }
-    status = rppCreate(&handleHipBatched, 1, 0, streamBatched, RPP_HIP_BACKEND);
-    if (status != rppStatusSuccess) {
-        cerr << "Error: Failed to initialize Batched RPP HIP handle (Status: " << status << ")" << endl;
-        (void)hipStreamDestroy(streamBatched);
-        rppDestroy(handleHostBatched, RPP_HOST_BACKEND);
-        return 1;
-    }
-
-    // Control OpenCV threading to match RPP HOST configuration for fair comparison
-    cv::setNumThreads(NUM_THREADS);
-
-    int batchSizeGray = 0, maxWidthGray = 0, maxHeightGray = 0;
-    int batchSizeRGB = 0, maxWidthRGB = 0, maxHeightRGB = 0;
-
-    vector<Mat> imgsGray =
-        loadBatchImages(GRAY_IMAGE_PATH, batchSizeGray, maxWidthGray, maxHeightGray, false);
-    vector<Mat> imgsRGB =
-        loadBatchImages(RGB_IMAGE_PATH, batchSizeRGB, maxWidthRGB, maxHeightRGB, true);
-
-    if (imgsGray.empty() && imgsRGB.empty()) {
-        cerr << "No images found in the dataset directories!" << endl;
         rppDestroy(handleHost, RPP_HOST_BACKEND);
         rppDestroy(handleHip, RPP_HIP_BACKEND);
         (void)hipStreamDestroy(stream);
-        return -1;
+        return 1;
     }
-
-    // Initialize global image metadata for Excel output
-    if (!imgsGray.empty()) {
-        ostringstream oss;
-        oss << maxWidthGray << "x" << maxHeightGray;
-        grayImageSize = oss.str();
-        grayImageDtype = getDtypeString(imgsGray[0].type());
-        grayBatchSize = batchSizeGray;
-    }
-    if (!imgsRGB.empty()) {
-        ostringstream oss;
-        oss << maxWidthRGB << "x" << maxHeightRGB;
-        rgbImageSize = oss.str();
-        rgbImageDtype = getDtypeString(imgsRGB[0].type());
-        rgbBatchSize = batchSizeRGB;
+    status = rppCreate(&handleHipBatched, maxBatchSize, 0, streamBatched, RPP_HIP_BACKEND);
+    if (status != rppStatusSuccess) {
+        cerr << "Error: Failed to initialize Batched RPP HIP handle with batch size " << maxBatchSize
+             << " (Status: " << status << ")" << endl;
+        (void)hipStreamDestroy(streamBatched);
+        rppDestroy(handleHostBatched, RPP_HOST_BACKEND);
+        rppDestroy(handleHost, RPP_HOST_BACKEND);
+        rppDestroy(handleHip, RPP_HIP_BACKEND);
+        (void)hipStreamDestroy(stream);
+        return 1;
     }
 
     // Parameters
@@ -347,15 +357,15 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_Resize_Batched(imgsGray, false, resizeW, resizeH, RpptInterpolationType::BILINEAR,
                              "Bilinear", handleHipBatched, streamBatched);
 
-        // benchmark_OpenCV_Resize(imgsGray, false, resizeW, resizeH, INTER_CUBIC, "Bicubic");
-        // benchmark_RPP_HOST_Resize(imgsGray, false, resizeW, resizeH, RpptInterpolationType::BICUBIC,
-        //                      "Bicubic", handleHost);
-        // benchmark_RPP_HIP_Resize(imgsGray, false, resizeW, resizeH, RpptInterpolationType::BICUBIC,
-        //                      "Bicubic", handleHip, stream);
-        // benchmark_RPP_HOST_Resize_Batched(imgsGray, false, resizeW, resizeH, RpptInterpolationType::BICUBIC,
-        //                      "Bicubic", handleHostBatched);
-        // benchmark_RPP_HIP_Resize_Batched(imgsGray, false, resizeW, resizeH, RpptInterpolationType::BICUBIC,
-        //                      "Bicubic", handleHipBatched, streamBatched);
+        benchmark_OpenCV_Resize(imgsGray, false, resizeW, resizeH, INTER_CUBIC, "Bicubic");
+        benchmark_RPP_HOST_Resize(imgsGray, false, resizeW, resizeH, RpptInterpolationType::BICUBIC,
+                             "Bicubic", handleHost);
+        benchmark_RPP_HIP_Resize(imgsGray, false, resizeW, resizeH, RpptInterpolationType::BICUBIC,
+                             "Bicubic", handleHip, stream);
+        benchmark_RPP_HOST_Resize_Batched(imgsGray, false, resizeW, resizeH, RpptInterpolationType::BICUBIC,
+                             "Bicubic", handleHostBatched);
+        benchmark_RPP_HIP_Resize_Batched(imgsGray, false, resizeW, resizeH, RpptInterpolationType::BICUBIC,
+                             "Bicubic", handleHipBatched, streamBatched);
 
         benchmark_OpenCV_Flip(imgsGray, false, 1);
         benchmark_RPP_HOST_Flip(imgsGray, false, 1, handleHost);
@@ -363,17 +373,17 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HOST_Flip_Batched(imgsGray, false, 1, handleHostBatched);
         benchmark_RPP_HIP_Flip_Batched(imgsGray, false, 1, handleHipBatched, streamBatched);
 
-        benchmark_OpenCV_Flip(imgsGray, false, 0);
-        benchmark_RPP_HOST_Flip(imgsGray, false, 0, handleHost);
-        benchmark_RPP_HIP_Flip(imgsGray, false, 0, handleHip, stream);
-        benchmark_RPP_HOST_Flip_Batched(imgsGray, false, 0, handleHostBatched);
-        benchmark_RPP_HIP_Flip_Batched(imgsGray, false, 0, handleHipBatched, streamBatched);
+        // benchmark_OpenCV_Flip(imgsGray, false, 0);
+        // benchmark_RPP_HOST_Flip(imgsGray, false, 0, handleHost);
+        // benchmark_RPP_HIP_Flip(imgsGray, false, 0, handleHip, stream);
+        // benchmark_RPP_HOST_Flip_Batched(imgsGray, false, 0, handleHostBatched);
+        // benchmark_RPP_HIP_Flip_Batched(imgsGray, false, 0, handleHipBatched, streamBatched);
 
-        benchmark_OpenCV_Flip(imgsGray, false, -1);
-        benchmark_RPP_HOST_Flip(imgsGray, false, -1, handleHost);
-        benchmark_RPP_HIP_Flip(imgsGray, false, -1, handleHip, stream);
-        benchmark_RPP_HOST_Flip_Batched(imgsGray, false, -1, handleHostBatched);
-        benchmark_RPP_HIP_Flip_Batched(imgsGray, false, -1, handleHipBatched, streamBatched);
+        // benchmark_OpenCV_Flip(imgsGray, false, -1);
+        // benchmark_RPP_HOST_Flip(imgsGray, false, -1, handleHost);
+        // benchmark_RPP_HIP_Flip(imgsGray, false, -1, handleHip, stream);
+        // benchmark_RPP_HOST_Flip_Batched(imgsGray, false, -1, handleHostBatched);
+        // benchmark_RPP_HIP_Flip_Batched(imgsGray, false, -1, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_Rotate(imgsGray, false, angleDeg);
         benchmark_RPP_HOST_Rotate(imgsGray, false, angleDeg, handleHost);
@@ -696,15 +706,15 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_Resize_Batched(imgsRGB, true, resizeW, resizeH, RpptInterpolationType::BILINEAR,
                              "Bilinear", handleHipBatched, streamBatched);
 
-        // benchmark_OpenCV_Resize(imgsRGB, true, resizeW, resizeH, INTER_CUBIC, "Bicubic");
-        // benchmark_RPP_HOST_Resize(imgsRGB, true, resizeW, resizeH, RpptInterpolationType::BICUBIC,
-        //                      "Bicubic", handleHost);
-        // benchmark_RPP_HIP_Resize(imgsRGB, true, resizeW, resizeH, RpptInterpolationType::BICUBIC,
-        //                      "Bicubic", handleHip, stream);
-        // benchmark_RPP_HOST_Resize_Batched(imgsRGB, true, resizeW, resizeH, RpptInterpolationType::BICUBIC,
-        //                      "Bicubic", handleHostBatched);
-        // benchmark_RPP_HIP_Resize_Batched(imgsRGB, true, resizeW, resizeH, RpptInterpolationType::BICUBIC,
-        //                      "Bicubic", handleHipBatched, streamBatched);
+        benchmark_OpenCV_Resize(imgsRGB, true, resizeW, resizeH, INTER_CUBIC, "Bicubic");
+        benchmark_RPP_HOST_Resize(imgsRGB, true, resizeW, resizeH, RpptInterpolationType::BICUBIC,
+                             "Bicubic", handleHost);
+        benchmark_RPP_HIP_Resize(imgsRGB, true, resizeW, resizeH, RpptInterpolationType::BICUBIC,
+                             "Bicubic", handleHip, stream);
+        benchmark_RPP_HOST_Resize_Batched(imgsRGB, true, resizeW, resizeH, RpptInterpolationType::BICUBIC,
+                             "Bicubic", handleHostBatched);
+        benchmark_RPP_HIP_Resize_Batched(imgsRGB, true, resizeW, resizeH, RpptInterpolationType::BICUBIC,
+                             "Bicubic", handleHipBatched, streamBatched);
 
         benchmark_OpenCV_Flip(imgsRGB, true, 1);
         benchmark_RPP_HOST_Flip(imgsRGB, true, 1, handleHost);
@@ -712,17 +722,17 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HOST_Flip_Batched(imgsRGB, true, 1, handleHostBatched);
         benchmark_RPP_HIP_Flip_Batched(imgsRGB, true, 1, handleHipBatched, streamBatched);
 
-        benchmark_OpenCV_Flip(imgsRGB, true, 0);
-        benchmark_RPP_HOST_Flip(imgsRGB, true, 0, handleHost);
-        benchmark_RPP_HIP_Flip(imgsRGB, true, 0, handleHip, stream);
-        benchmark_RPP_HOST_Flip_Batched(imgsRGB, true, 0, handleHostBatched);
-        benchmark_RPP_HIP_Flip_Batched(imgsRGB, true, 0, handleHipBatched, streamBatched);
+        // benchmark_OpenCV_Flip(imgsRGB, true, 0);
+        // benchmark_RPP_HOST_Flip(imgsRGB, true, 0, handleHost);
+        // benchmark_RPP_HIP_Flip(imgsRGB, true, 0, handleHip, stream);
+        // benchmark_RPP_HOST_Flip_Batched(imgsRGB, true, 0, handleHostBatched);
+        // benchmark_RPP_HIP_Flip_Batched(imgsRGB, true, 0, handleHipBatched, streamBatched);
 
-        benchmark_OpenCV_Flip(imgsRGB, true, -1);
-        benchmark_RPP_HOST_Flip(imgsRGB, true, -1, handleHost);
-        benchmark_RPP_HIP_Flip(imgsRGB, true, -1, handleHip, stream);
-        benchmark_RPP_HOST_Flip_Batched(imgsRGB, true, -1, handleHostBatched);
-        benchmark_RPP_HIP_Flip_Batched(imgsRGB, true, -1, handleHipBatched, streamBatched);
+        // benchmark_OpenCV_Flip(imgsRGB, true, -1);
+        // benchmark_RPP_HOST_Flip(imgsRGB, true, -1, handleHost);
+        // benchmark_RPP_HIP_Flip(imgsRGB, true, -1, handleHip, stream);
+        // benchmark_RPP_HOST_Flip_Batched(imgsRGB, true, -1, handleHostBatched);
+        // benchmark_RPP_HIP_Flip_Batched(imgsRGB, true, -1, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_Rotate(imgsRGB, true, angleDeg);
         benchmark_RPP_HOST_Rotate(imgsRGB, true, angleDeg, handleHost);
@@ -886,10 +896,10 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_Posterize_Batched(imgsRGB, true, 4, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_Solarize(imgsRGB, true, 128);
-        benchmark_RPP_HOST_Solarize(imgsRGB, true, 128, handleHost);
-        benchmark_RPP_HIP_Solarize(imgsRGB, true, 128, handleHip, stream);
-        benchmark_RPP_HOST_Solarize_Batched(imgsRGB, true, 128, handleHostBatched);
-        benchmark_RPP_HIP_Solarize_Batched(imgsRGB, true, 128, handleHipBatched, streamBatched);
+        benchmark_RPP_HOST_Solarize(imgsRGB, true, 0.5f, handleHost);  // threshold in [0,1]
+        benchmark_RPP_HIP_Solarize(imgsRGB, true, 0.5f, handleHip, stream);  // threshold in [0,1]
+        benchmark_RPP_HOST_Solarize_Batched(imgsRGB, true, 0.5f, handleHostBatched);  // threshold in [0,1]
+        benchmark_RPP_HIP_Solarize_Batched(imgsRGB, true, 0.5f, handleHipBatched, streamBatched);  // threshold in [0,1]
 
         benchmark_OpenCV_ColorCast(imgsRGB, true, 20.0f, 10.0f, -15.0f);
         benchmark_RPP_HOST_ColorCast(imgsRGB, true, 20.0f, 10.0f, -15.0f, handleHost);
