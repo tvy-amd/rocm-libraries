@@ -40,6 +40,10 @@
     #include <cuda/std/array>
     #include <cuda/std/mdspan>
     #include <hipcub/hipcub.hpp>
+    #include <thrust/iterator/constant_iterator.h>
+    #include <thrust/iterator/counting_iterator.h>
+    #include <thrust/iterator/discard_iterator.h>
+    #include <thrust/iterator/transform_iterator.h>
     #include <thrust/iterator/zip_iterator.h>
 #endif
 
@@ -657,6 +661,14 @@ using counting_iterator = ::rocprim::counting_iterator<T>;
 template<typename It, typename UnaryOp, typename ValueType = ::hipcub::detail::it_value_t<It>>
 using transform_iterator = ::rocprim::transform_iterator<It, UnaryOp, ValueType>;
 
+template<class It, class UnaryOp>
+HIPCUB_HOST_DEVICE
+inline auto make_transform_iterator(It      iterator,
+                                    UnaryOp transform) -> transform_iterator<It, UnaryOp>
+{
+    return transform_iterator<It, UnaryOp>(iterator, transform);
+}
+
 template<typename IteratorTuple>
 using zip_iterator = ::rocprim::zip_iterator<IteratorTuple>;
 
@@ -703,13 +715,21 @@ struct extents_size<extents<IndexType, Dims...>>
 };
 
 template<typename T, typename Difference = std::ptrdiff_t>
-using constant_iterator = ::cub::ConstantInputIterator<T, Difference>;
+using constant_iterator = ::thrust::constant_iterator<T, Difference>;
 
 template<typename T>
-using counting_iterator = ::cub::CountingInputIterator<T>;
+using counting_iterator = ::thrust::counting_iterator<T>;
 
 template<typename It, typename UnaryOp, typename ValueType = ::hipcub::detail::it_value_t<It>>
-using transform_iterator = ::cub::TransformInputIterator<ValueType, UnaryOp, It>;
+using transform_iterator = ::thrust::transform_iterator<UnaryOp, It>;
+
+template<class It, class UnaryOp>
+HIPCUB_HOST_DEVICE
+inline auto make_transform_iterator(It      iterator,
+                                    UnaryOp transform) -> transform_iterator<It, UnaryOp>
+{
+    return transform_iterator<It, UnaryOp>(iterator, transform);
+}
 
 template<typename IteratorTuple>
 using zip_iterator = ::thrust::zip_iterator<IteratorTuple>;
@@ -724,15 +744,15 @@ auto make_tuple(Types&&... args) -> tuple<Types...>
 }
 
 template<typename T = void>
-using discard_iterator = ::cub::DiscardOutputIterator<T>;
+using discard_iterator = ::thrust::discard_iterator<T>;
 
 template<typename T = void>
-using discard_output_iterator = ::cub::DiscardOutputIterator<T>;
+using discard_output_iterator = ::thrust::discard_iterator<T>;
 
 template<typename T = std::size_t>
-inline auto make_discard_iterator() -> ::cub::DiscardOutputIterator<T>
+inline auto make_discard_iterator() -> ::thrust::discard_iterator<T>
 {
-    return ::cub::DiscardOutputIterator<T>();
+    return ::thrust::discard_iterator<T>();
 }
 
 #endif
