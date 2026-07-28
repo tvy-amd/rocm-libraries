@@ -306,23 +306,23 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HOST_GaussianFilter_Batched(imgsGray, false, filterKernel, gaussSigma, handleHostBatched);
         benchmark_RPP_HIP_GaussianFilter_Batched(imgsGray, false, filterKernel, gaussSigma, handleHipBatched, streamBatched);
 
-        // benchmark_OpenCV_SobelFilter(imgsGray, false, 0);
-        // benchmark_RPP_HOST_SobelFilter(imgsGray, false, 0, handleHost);
-        // benchmark_RPP_HIP_SobelFilter(imgsGray, false, 0, handleHip, stream);
-        // benchmark_RPP_HOST_SobelFilter_Batched(imgsGray, false, 0, handleHostBatched);
-        // benchmark_RPP_HIP_SobelFilter_Batched(imgsGray, false, 0, handleHipBatched, streamBatched);
+        benchmark_OpenCV_SobelFilter(imgsGray, false, 0);
+        benchmark_RPP_HOST_SobelFilter(imgsGray, false, 0, handleHost);
+        benchmark_RPP_HIP_SobelFilter(imgsGray, false, 0, handleHip, stream);
+        benchmark_RPP_HOST_SobelFilter_Batched(imgsGray, false, 0, handleHostBatched);
+        benchmark_RPP_HIP_SobelFilter_Batched(imgsGray, false, 0, handleHipBatched, streamBatched);
 
-        // benchmark_OpenCV_SobelFilter(imgsGray, false, 1);
-        // benchmark_RPP_HOST_SobelFilter(imgsGray, false, 1, handleHost);
-        // benchmark_RPP_HIP_SobelFilter(imgsGray, false, 1, handleHip, stream);
-        // benchmark_RPP_HOST_SobelFilter_Batched(imgsGray, false, 1, handleHostBatched);
-        // benchmark_RPP_HIP_SobelFilter_Batched(imgsGray, false, 1, handleHipBatched, streamBatched);
+        benchmark_OpenCV_SobelFilter(imgsGray, false, 1);
+        benchmark_RPP_HOST_SobelFilter(imgsGray, false, 1, handleHost);
+        benchmark_RPP_HIP_SobelFilter(imgsGray, false, 1, handleHip, stream);
+        benchmark_RPP_HOST_SobelFilter_Batched(imgsGray, false, 1, handleHostBatched);
+        benchmark_RPP_HIP_SobelFilter_Batched(imgsGray, false, 1, handleHipBatched, streamBatched);
 
-        // benchmark_OpenCV_SobelFilter(imgsGray, false, 2);
-        // benchmark_RPP_HOST_SobelFilter(imgsGray, false, 2, handleHost);
-        // benchmark_RPP_HIP_SobelFilter(imgsGray, false, 2, handleHip, stream);
-        // benchmark_RPP_HOST_SobelFilter_Batched(imgsGray, false, 2, handleHostBatched);
-        // benchmark_RPP_HIP_SobelFilter_Batched(imgsGray, false, 2, handleHipBatched, streamBatched);
+        benchmark_OpenCV_SobelFilter(imgsGray, false, 2);
+        benchmark_RPP_HOST_SobelFilter(imgsGray, false, 2, handleHost);
+        benchmark_RPP_HIP_SobelFilter(imgsGray, false, 2, handleHip, stream);
+        benchmark_RPP_HOST_SobelFilter_Batched(imgsGray, false, 2, handleHostBatched);
+        benchmark_RPP_HIP_SobelFilter_Batched(imgsGray, false, 2, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_Emboss(imgsGray, false, 3, 1.0f);
         benchmark_RPP_HOST_Emboss(imgsGray, false, 3, 1.0f, handleHost);
@@ -554,11 +554,11 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_Transpose_Batched(imgsGray, false, handleHipBatched, streamBatched);
 
         cout << "\n--- Advanced Operations ---" << endl;
-        // benchmark_OpenCV_HistogramEqualize(imgsGray, false);
-        // benchmark_RPP_HOST_HistogramEqualize(imgsGray, false, handleHost);
-        // benchmark_RPP_HIP_HistogramEqualize(imgsGray, false, handleHip, stream);
-        // benchmark_RPP_HOST_HistogramEqualize_Batched(imgsGray, false, handleHostBatched);
-        // benchmark_RPP_HIP_HistogramEqualize_Batched(imgsGray, false, handleHipBatched, streamBatched);
+        benchmark_OpenCV_HistogramEqualize(imgsGray, false);
+        benchmark_RPP_HOST_HistogramEqualize(imgsGray, false, handleHost);
+        benchmark_RPP_HIP_HistogramEqualize(imgsGray, false, handleHip, stream);
+        benchmark_RPP_HOST_HistogramEqualize_Batched(imgsGray, false, handleHostBatched);
+        benchmark_RPP_HIP_HistogramEqualize_Batched(imgsGray, false, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_LUT(imgsGray, false);
         benchmark_RPP_HOST_LUT(imgsGray, false, handleHost);

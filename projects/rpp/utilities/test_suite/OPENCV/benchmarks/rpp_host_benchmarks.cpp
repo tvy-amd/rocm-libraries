@@ -3506,6 +3506,120 @@ void benchmark_RPP_HOST_MedianFilter_Batched(const vector<Mat>& imgs, bool isCol
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
+void benchmark_RPP_HOST_SobelFilter_Batched(const vector<Mat>& imgs, bool isColor, int sobelType,
+                                            rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int dstChannels = 1;  // Sobel filter always outputs grayscale
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+    Rpp32u kernelSize = 3;  // Sobel uses 3x3 kernel
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = RpptLayout::NCHW;  // Output is always grayscale (planar)
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, dstChannels, offsetInBytes);
+
+    Rpp64u srcBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp64u dstBufferSize = (Rpp64u)dstDesc.h * (Rpp64u)dstDesc.w * (Rpp64u)dstDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(srcBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(dstBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_sobel_filter(input, &srcDesc, output, &dstDesc, sobelType, kernelSize,
+                                           roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "SobelFilter");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST SobelFilter (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "type=" + to_string(sobelType));
+}
+
+void benchmark_RPP_HOST_HistogramEqualize_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u offsetInBytes = 0;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
+    srcDesc.dataType = RpptDataType::U8;
+    dstDesc.dataType = RpptDataType::U8;
+
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, offsetInBytes);
+
+    Rpp64u ioBufferSize = (Rpp64u)srcDesc.h * (Rpp64u)srcDesc.w * (Rpp64u)srcDesc.c * (Rpp64u)batchSize;
+    Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+    Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
+
+    RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; i++) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp64u bufferSizePerImage = srcDesc.strides.nStride;
+    for (int i = 0; i < batchSize; i++) {
+        Rpp8u* imgPtr = input + i * bufferSizePerImage;
+        for (int row = 0; row < imgs[i].rows; row++) {
+            memcpy(imgPtr + row * srcDesc.strides.hStride, imgs[i].data + row * imgs[i].cols * numChannels, imgs[i].cols * numChannels);
+        }
+    }
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; k++) {
+        CHECK_RPP_STATUS(rppt_histogram_equalize(input, &srcDesc, output, &dstDesc,
+                                                 roiTensor, RpptRoiType::XYWH, handle, RPP_HOST_BACKEND),
+                        "HistogramEqualize");
+    }
+    auto end = high_resolution_clock::now();
+
+    free(input);
+    free(output);
+    free(roiTensor);
+
+    printResult("RPP HOST HistogramEqualize (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count());
+}
+
 void benchmark_RPP_HOST_Hue_Batched(const vector<Mat>& imgs, bool isColor, float hueDelta, rppHandle_t handle) {
     int batchSize = (int)imgs.size();
     if (batchSize == 0) return;

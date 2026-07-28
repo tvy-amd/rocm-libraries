@@ -477,6 +477,8 @@ void benchmark_RPP_HIP_Rotate_Batched(const vector<Mat>& imgs, bool isColor, flo
 void benchmark_RPP_HIP_BoxFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_GaussianFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, float sigma, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_MedianFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, rppHandle_t handle, hipStream_t stream);
+void benchmark_RPP_HIP_SobelFilter_Batched(const vector<Mat>& imgs, bool isColor, int sobelType, rppHandle_t handle, hipStream_t stream);
+void benchmark_RPP_HIP_HistogramEqualize_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_Hue_Batched(const vector<Mat>& imgs, bool isColor, float hueFactor, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_Saturation_Batched(const vector<Mat>& imgs, bool isColor, float satFactor, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_ColorToGreyscale_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
@@ -537,6 +539,8 @@ void benchmark_RPP_HOST_Rotate_Batched(const vector<Mat>& imgs, bool isColor, fl
 void benchmark_RPP_HOST_BoxFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, rppHandle_t handle);
 void benchmark_RPP_HOST_GaussianFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, float sigma, rppHandle_t handle);
 void benchmark_RPP_HOST_MedianFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, rppHandle_t handle);
+void benchmark_RPP_HOST_SobelFilter_Batched(const vector<Mat>& imgs, bool isColor, int sobelType, rppHandle_t handle);
+void benchmark_RPP_HOST_HistogramEqualize_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
 void benchmark_RPP_HOST_Hue_Batched(const vector<Mat>& imgs, bool isColor, float hueFactor, rppHandle_t handle);
 void benchmark_RPP_HOST_Saturation_Batched(const vector<Mat>& imgs, bool isColor, float satFactor, rppHandle_t handle);
 void benchmark_RPP_HOST_ColorToGreyscale_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);

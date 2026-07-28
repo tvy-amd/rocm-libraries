@@ -6854,6 +6854,176 @@ void benchmark_RPP_HIP_MedianFilter_Batched(const vector<Mat>& imgs, bool isColo
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
+void benchmark_RPP_HIP_SobelFilter_Batched(const vector<Mat>& imgs, bool isColor, int sobelType,
+                                           rppHandle_t handle, hipStream_t stream) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int dstChannels = 1;  // Sobel filter always outputs grayscale
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    Rpp32u kernelSize = 3;  // Sobel uses 3x3 kernel
+    RpptLayout srcLayout = (isColor && imgs[0].channels() == 3) ? RpptLayout::NHWC : RpptLayout::NCHW;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = srcLayout;
+    srcDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, 0);
+
+    dstDesc.layout = RpptLayout::NCHW;  // Output is always grayscale (planar)
+    dstDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, dstChannels, 0);
+
+    size_t srcBufferSizePerImage = srcDesc.strides.nStride * sizeof(Rpp8u);
+    size_t dstBufferSizePerImage = dstDesc.strides.nStride * sizeof(Rpp8u);
+    size_t srcTotalBufferSize = srcBufferSizePerImage * batchSize;
+    size_t dstTotalBufferSize = dstBufferSizePerImage * batchSize;
+
+    Rpp8u *d_input, *d_output;
+    CHECK_HIP_STATUS(hipMalloc(&d_input, srcTotalBufferSize));
+    CHECK_HIP_STATUS(hipMalloc(&d_output, dstTotalBufferSize));
+
+    RpptROI *roiTensor;
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, batchSize * sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; ++i) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp8u* h_tempBuffer = new Rpp8u[srcTotalBufferSize]();
+
+    for (int i = 0; i < batchSize; ++i) {
+        Rpp8u* imgStart = h_tempBuffer + i * srcBufferSizePerImage;
+        int elementsPerRow = imgs[i].cols * numChannels;
+
+        if (srcLayout == RpptLayout::NHWC) {
+            for (int row = 0; row < imgs[i].rows; ++row) {
+                memcpy(imgStart + row * srcDesc.strides.hStride,
+                       imgs[i].data + row * elementsPerRow,
+                       elementsPerRow * sizeof(Rpp8u));
+            }
+        } else {
+            // For NCHW, need to deinterleave channels
+            for (int row = 0; row < imgs[i].rows; ++row) {
+                for (int col = 0; col < imgs[i].cols; ++col) {
+                    for (int ch = 0; ch < numChannels; ++ch) {
+                        int srcIdx = row * elementsPerRow + col * numChannels + ch;
+                        int dstIdx = ch * srcDesc.strides.cStride + row * srcDesc.strides.hStride + col;
+                        imgStart[dstIdx] = imgs[i].data[srcIdx];
+                    }
+                }
+            }
+        }
+    }
+
+    CHECK_HIP_STATUS(hipMemcpy(d_input, h_tempBuffer, srcTotalBufferSize, hipMemcpyHostToDevice));
+    delete[] h_tempBuffer;
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; ++k) {
+        CHECK_RPP_STATUS(rppt_sobel_filter(d_input, &srcDesc, d_output, &dstDesc,
+                                           sobelType, kernelSize, roiTensor, RpptRoiType::XYWH,
+                                           handle, RPP_HIP_BACKEND),
+                        "SobelFilter");
+    }
+    CHECK_HIP_STATUS(hipStreamSynchronize(stream));
+    auto end = high_resolution_clock::now();
+
+    CHECK_HIP_STATUS(hipFree(d_input));
+    CHECK_HIP_STATUS(hipFree(d_output));
+    CHECK_HIP_STATUS(hipHostFree(roiTensor));
+
+    printResult("RPP HIP SobelFilter (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "type=" + to_string(sobelType));
+}
+
+void benchmark_RPP_HIP_HistogramEqualize_Batched(const vector<Mat>& imgs, bool isColor,
+                                                 rppHandle_t handle, hipStream_t stream) {
+    int batchSize = (int)imgs.size();
+    if (batchSize == 0) return;
+
+    int numChannels = isColor ? 3 : 1;
+    int maxHeight = imgs[0].rows;
+    int maxWidth = imgs[0].cols;
+    RpptLayout layout = (isColor && imgs[0].channels() == 3) ? RpptLayout::NHWC : RpptLayout::NCHW;
+
+    RpptDesc srcDesc, dstDesc;
+    srcDesc.layout = layout;
+    srcDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&srcDesc, batchSize, maxHeight, maxWidth, numChannels, 0);
+
+    dstDesc.layout = layout;
+    dstDesc.dataType = RpptDataType::U8;
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, maxHeight, maxWidth, numChannels, 0);
+
+    size_t bufferSizePerImage = srcDesc.strides.nStride * sizeof(Rpp8u);
+    size_t totalBufferSize = bufferSizePerImage * batchSize;
+
+    Rpp8u *d_input, *d_output;
+    CHECK_HIP_STATUS(hipMalloc(&d_input, totalBufferSize));
+    CHECK_HIP_STATUS(hipMalloc(&d_output, totalBufferSize));
+
+    RpptROI *roiTensor;
+    CHECK_HIP_STATUS(hipHostMalloc(&roiTensor, batchSize * sizeof(RpptROI)));
+
+    for (int i = 0; i < batchSize; ++i) {
+        roiTensor[i].xywhROI.xy.x = 0;
+        roiTensor[i].xywhROI.xy.y = 0;
+        roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
+        roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
+    }
+
+    Rpp8u* h_tempBuffer = new Rpp8u[totalBufferSize]();
+
+    for (int i = 0; i < batchSize; ++i) {
+        Rpp8u* imgStart = h_tempBuffer + i * bufferSizePerImage;
+        int elementsPerRow = imgs[i].cols * numChannels;
+
+        if (layout == RpptLayout::NHWC) {
+            for (int row = 0; row < imgs[i].rows; ++row) {
+                memcpy(imgStart + row * srcDesc.strides.hStride,
+                       imgs[i].data + row * elementsPerRow,
+                       elementsPerRow * sizeof(Rpp8u));
+            }
+        } else {
+            // For NCHW, need to deinterleave channels
+            for (int row = 0; row < imgs[i].rows; ++row) {
+                for (int col = 0; col < imgs[i].cols; ++col) {
+                    for (int ch = 0; ch < numChannels; ++ch) {
+                        int srcIdx = row * elementsPerRow + col * numChannels + ch;
+                        int dstIdx = ch * srcDesc.strides.cStride + row * srcDesc.strides.hStride + col;
+                        imgStart[dstIdx] = imgs[i].data[srcIdx];
+                    }
+                }
+            }
+        }
+    }
+
+    CHECK_HIP_STATUS(hipMemcpy(d_input, h_tempBuffer, totalBufferSize, hipMemcpyHostToDevice));
+    delete[] h_tempBuffer;
+
+    auto start = high_resolution_clock::now();
+    for (int k = 0; k < NUM_RUNS; ++k) {
+        CHECK_RPP_STATUS(rppt_histogram_equalize(d_input, &srcDesc, d_output, &dstDesc,
+                                                 roiTensor, RpptRoiType::XYWH,
+                                                 handle, RPP_HIP_BACKEND),
+                        "HistogramEqualize");
+    }
+    CHECK_HIP_STATUS(hipStreamSynchronize(stream));
+    auto end = high_resolution_clock::now();
+
+    CHECK_HIP_STATUS(hipFree(d_input));
+    CHECK_HIP_STATUS(hipFree(d_output));
+    CHECK_HIP_STATUS(hipHostFree(roiTensor));
+
+    printResult("RPP HIP HistogramEqualize (Batched)", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), "");
+}
+
 
 // ===== COLOR OPERATIONS =====
 
