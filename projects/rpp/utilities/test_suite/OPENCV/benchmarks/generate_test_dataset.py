@@ -169,13 +169,13 @@ def generate_radial_pattern_image(index, output_path, width, height):
     dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2)
     intensity = (dist / max_dist * 255).astype(np.uint8)
 
-    # Calculate RGB channels
-    r = (intensity + index * 10) % 256
-    g = (255 - intensity) % 256
-    b = (intensity * 2) % 256
+    # Calculate RGB channels (use int32 to avoid overflow, then modulo and cast back)
+    r = ((intensity.astype(np.int32) + index * 10) % 256).astype(np.uint8)
+    g = ((255 - intensity.astype(np.int32)) % 256).astype(np.uint8)
+    b = ((intensity.astype(np.int32) * 2) % 256).astype(np.uint8)
 
     # Stack channels to create RGB image
-    img_array = np.stack([r, g, b], axis=-1).astype(np.uint8)
+    img_array = np.stack([r, g, b], axis=-1)
     img = Image.fromarray(img_array, "RGB")
 
     filename = os.path.join(output_path, f"radial_{index:03d}.png")
