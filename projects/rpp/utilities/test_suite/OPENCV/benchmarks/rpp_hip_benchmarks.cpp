@@ -6382,7 +6382,7 @@ void benchmark_RPP_HIP_Flip_Batched(const vector<Mat>& imgs, bool isColor, int f
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
     string name = (flipCode == 1) ? "Horizontal" : (flipCode == 0) ? "Vertical" : "Both";
-    printResult("RPP HIP Flip (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Flip", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "type=" + name);
 }
 
@@ -6466,7 +6466,7 @@ void benchmark_RPP_HIP_Resize_Batched(const vector<Mat>& imgs, bool isColor, int
 
     ostringstream params;
     params << "type=" << interpName << ", size=" << dstW << "x" << dstH;
-    printResult("RPP HIP Resize (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Resize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -6547,7 +6547,7 @@ void benchmark_RPP_HIP_Crop_Batched(const vector<Mat>& imgs, bool isColor, int c
 
     ostringstream params;
     params << "size=" << cropW << "x" << cropH;
-    printResult("RPP HIP Crop (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Crop", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -6623,7 +6623,7 @@ void benchmark_RPP_HIP_Rotate_Batched(const vector<Mat>& imgs, bool isColor, flo
 
     ostringstream params;
     params << "angle=" << angleDeg << "deg";
-    printResult("RPP HIP Rotate (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Rotate", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -6698,7 +6698,7 @@ void benchmark_RPP_HIP_BoxFilter_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP BoxFilter (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH BoxFilter", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
@@ -6777,7 +6777,7 @@ void benchmark_RPP_HIP_GaussianFilter_Batched(const vector<Mat>& imgs, bool isCo
 
     ostringstream params;
     params << "kernel=" << kernelSize << ", sigma=" << sigma;
-    printResult("RPP HIP GaussianFilter (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH GaussianFilter", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -6850,7 +6850,7 @@ void benchmark_RPP_HIP_MedianFilter_Batched(const vector<Mat>& imgs, bool isColo
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP MedianFilter (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH MedianFilter", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
@@ -6937,7 +6937,7 @@ void benchmark_RPP_HIP_SobelFilter_Batched(const vector<Mat>& imgs, bool isColor
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP SobelFilter (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH SobelFilter", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "type=" + to_string(sobelType));
 }
 
@@ -7020,7 +7020,7 @@ void benchmark_RPP_HIP_HistogramEqualize_Batched(const vector<Mat>& imgs, bool i
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP HistogramEqualize (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH HistogramEqualize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 }
 
@@ -7098,7 +7098,7 @@ void benchmark_RPP_HIP_Hue_Batched(const vector<Mat>& imgs, bool isColor, float 
 
     ostringstream params;
     params << "hue=" << hueFactor;
-    printResult("RPP HIP Hue (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Hue", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -7173,7 +7173,7 @@ void benchmark_RPP_HIP_Saturation_Batched(const vector<Mat>& imgs, bool isColor,
 
     ostringstream params;
     params << "sat=" << satFactor;
-    printResult("RPP HIP Saturation (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Saturation", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -7240,7 +7240,7 @@ void benchmark_RPP_HIP_ColorToGreyscale_Batched(const vector<Mat>& imgs, bool is
     CHECK_HIP_STATUS(hipFree(d_input));
     CHECK_HIP_STATUS(hipFree(d_output));
 
-    printResult("RPP HIP ColorToGreyscale (Batched)", imgs.size(), true,
+    printResult("RPP HIP BATCH ColorToGreyscale", imgs.size(), true,
                 duration<double, milli>(end - start).count(), "");
 }
 
@@ -7319,7 +7319,7 @@ void benchmark_RPP_HIP_Brightness_Batched(const vector<Mat>& imgs, bool isColor,
 
     ostringstream params;
     params << "alpha=" << alpha << ", beta=" << beta;
-    printResult("RPP HIP Brightness (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Brightness", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -7398,7 +7398,7 @@ void benchmark_RPP_HIP_Contrast_Batched(const vector<Mat>& imgs, bool isColor, f
 
     ostringstream params;
     params << "factor=" << contrastFactor << ", center=" << contrastCenter;
-    printResult("RPP HIP Contrast (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Contrast", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -7489,7 +7489,7 @@ void benchmark_RPP_HIP_Emboss_Batched(const vector<Mat>& imgs, bool isColor, int
 
     ostringstream params;
     params << "kernel=" << kernelSize << ", strength=" << strength;
-    printResult("RPP HIP Emboss (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Emboss", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -7593,7 +7593,7 @@ void benchmark_RPP_HIP_AddScalar_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
     CHECK_HIP_STATUS(hipHostFree(roi3dTensor));
 
-    printResult("RPP HIP AddScalar (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH AddScalar", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "value=" + to_string((int)addVal));
 }
 
@@ -7694,7 +7694,7 @@ void benchmark_RPP_HIP_SubtractScalar_Batched(const vector<Mat>& imgs, bool isCo
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
     CHECK_HIP_STATUS(hipHostFree(roi3dTensor));
 
-    printResult("RPP HIP SubtractScalar (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH SubtractScalar", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "value=" + to_string((int)subVal));
 }
 
@@ -7797,7 +7797,7 @@ void benchmark_RPP_HIP_MultiplyScalar_Batched(const vector<Mat>& imgs, bool isCo
 
     ostringstream params;
     params << "value=" << mulVal;
-    printResult("RPP HIP MultiplyScalar (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH MultiplyScalar", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -7882,7 +7882,7 @@ void benchmark_RPP_HIP_GaussianNoise_Batched(const vector<Mat>& imgs, bool isCol
 
     ostringstream params;
     params << "mean=" << mean << ", stddev=" << stddev;
-    printResult("RPP HIP GaussianNoise (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH GaussianNoise", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -7972,7 +7972,7 @@ void benchmark_RPP_HIP_SaltAndPepperNoise_Batched(const vector<Mat>& imgs, bool 
     CHECK_HIP_STATUS(hipHostFree(pepperValueTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP SaltAndPepperNoise (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH SaltAndPepperNoise", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "probability=" + to_string(noiseProb));
 }
 
@@ -8051,7 +8051,7 @@ void benchmark_RPP_HIP_NoiseShot_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipHostFree(shotNoiseTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP NoiseShot (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH NoiseShot", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "factor=" + to_string(shotNoiseFactor));
 }
 
@@ -8138,7 +8138,7 @@ void benchmark_RPP_HIP_ColorCast_Batched(const vector<Mat>& imgs, bool isColor, 
 
     ostringstream params;
     params << "R=" << rShift << ", G=" << gShift << ", B=" << bShift;
-    printResult("RPP HIP ColorCast (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH ColorCast", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -8217,7 +8217,7 @@ void benchmark_RPP_HIP_ColorTemperature_Batched(const vector<Mat>& imgs, bool is
     CHECK_HIP_STATUS(hipHostFree(adjustmentTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP ColorTemperature (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH ColorTemperature", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "adjustment=" + to_string(adjustmentValue));
 }
 
@@ -8294,7 +8294,7 @@ void benchmark_RPP_HIP_ColorTwist_Batched(const vector<Mat>& imgs, bool isColor,
 
     ostringstream params;
     params << "hue=" << hueShift[0] << ", sat=" << satFactor[0];
-    printResult("RPP HIP ColorTwist (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH ColorTwist", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -8381,7 +8381,7 @@ void benchmark_RPP_HIP_Vignette_Batched(const vector<Mat>& imgs, bool isColor, f
     CHECK_HIP_STATUS(hipHostFree(intensityTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP Vignette (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Vignette", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "intensity=" + to_string(vignetteIntensity));
 }
 
@@ -8469,7 +8469,7 @@ void benchmark_RPP_HIP_NonLinearBlend_Batched(const vector<Mat>& imgs, bool isCo
     CHECK_HIP_STATUS(hipHostFree(stdDevTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP NonLinearBlend (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH NonLinearBlend", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "stdDev=" + to_string(stdDev));
 }
 
@@ -8548,7 +8548,7 @@ void benchmark_RPP_HIP_Posterize_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipHostFree(posterizeLevelBits));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP Posterize (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Posterize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "levelBits=" + to_string(levelBits));
 }
 
@@ -8627,7 +8627,7 @@ void benchmark_RPP_HIP_Solarize_Batched(const vector<Mat>& imgs, bool isColor, f
     CHECK_HIP_STATUS(hipHostFree(thresholdTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP Solarize (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Solarize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "threshold=" + to_string(threshold));
 }
 
@@ -8706,7 +8706,7 @@ void benchmark_RPP_HIP_Glitch_Batched(const vector<Mat>& imgs, bool isColor, rpp
     CHECK_HIP_STATUS(hipHostFree(rgbOffsets));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP Glitch (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Glitch", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -8780,7 +8780,7 @@ void benchmark_RPP_HIP_JpegCompressionDistortion_Batched(const vector<Mat>& imgs
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP JpegCompressionDistortion (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH JpegCompressionDistortion", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "quality=" + to_string(quality));
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -8861,7 +8861,7 @@ void benchmark_RPP_HIP_TensorMin_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipHostFree(minOutputs));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP TensorMin (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH TensorMin", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -8937,7 +8937,7 @@ void benchmark_RPP_HIP_TensorMax_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipHostFree(maxOutputs));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP TensorMax (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH TensorMax", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -9013,7 +9013,7 @@ void benchmark_RPP_HIP_TensorSum_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipHostFree(sumOutputs));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP TensorSum (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH TensorSum", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -9089,7 +9089,7 @@ void benchmark_RPP_HIP_TensorMean_Batched(const vector<Mat>& imgs, bool isColor,
     CHECK_HIP_STATUS(hipHostFree(meanOutputs));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP TensorMean (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH TensorMean", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -9171,7 +9171,7 @@ void benchmark_RPP_HIP_TensorStddev_Batched(const vector<Mat>& imgs, bool isColo
     CHECK_HIP_STATUS(hipHostFree(meanOutputs));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP TensorStddev (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH TensorStddev", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -9251,7 +9251,7 @@ void benchmark_RPP_HIP_Threshold_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipHostFree(maxTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP Threshold (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Threshold", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "threshold=" + to_string(thresh));
 }
 
@@ -9337,7 +9337,7 @@ void benchmark_RPP_HIP_WarpAffine_Batched(const vector<Mat>& imgs, bool isColor,
     CHECK_HIP_STATUS(hipHostFree(affineTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP WarpAffine (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH WarpAffine", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -9426,7 +9426,7 @@ void benchmark_RPP_HIP_WarpPerspective_Batched(const vector<Mat>& imgs, bool isC
     CHECK_HIP_STATUS(hipHostFree(perspectiveTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP WarpPerspective (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH WarpPerspective", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -9501,7 +9501,7 @@ void benchmark_RPP_HIP_Fisheye_Batched(const vector<Mat>& imgs, bool isColor, rp
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP Fisheye (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Fisheye", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -9616,7 +9616,7 @@ void benchmark_RPP_HIP_LensCorrection_Batched(const vector<Mat>& imgs, bool isCo
     CHECK_HIP_STATUS(hipHostFree(distortionCoeffs));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP LensCorrection (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH LensCorrection", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -9695,7 +9695,7 @@ void benchmark_RPP_HIP_GammaCorrection_Batched(const vector<Mat>& imgs, bool isC
     CHECK_HIP_STATUS(hipHostFree(gammaTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP GammaCorrection (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH GammaCorrection", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "gamma=" + to_string(gamma));
 }
 
@@ -9774,7 +9774,7 @@ void benchmark_RPP_HIP_Exposure_Batched(const vector<Mat>& imgs, bool isColor, f
     CHECK_HIP_STATUS(hipHostFree(exposureTensor));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP Exposure (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Exposure", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "factor=" + to_string(exposureFactor));
 }
 
@@ -9860,7 +9860,7 @@ void benchmark_RPP_HIP_Blend_Batched(const vector<Mat>& imgs, bool isColor, floa
 
     ostringstream params;
     params << "alpha=" << alpha;
-    printResult("RPP HIP Blend (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Blend", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -9947,7 +9947,7 @@ void benchmark_RPP_HIP_Erode_Batched(const vector<Mat>& imgs, bool isColor, int 
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP Erode (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Erode", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
@@ -10032,7 +10032,7 @@ void benchmark_RPP_HIP_Dilate_Batched(const vector<Mat>& imgs, bool isColor, int
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP Dilate (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Dilate", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
@@ -10114,7 +10114,7 @@ void benchmark_RPP_HIP_BitwiseAnd_Batched(const vector<Mat>& imgs, bool isColor,
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP BitwiseAnd (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH BitwiseAnd", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 }
 
@@ -10193,7 +10193,7 @@ void benchmark_RPP_HIP_BitwiseOr_Batched(const vector<Mat>& imgs, bool isColor,
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP BitwiseOr (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH BitwiseOr", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 }
 
@@ -10262,7 +10262,7 @@ void benchmark_RPP_HIP_BitwiseNot_Batched(const vector<Mat>& imgs, bool isColor,
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP BitwiseNot (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH BitwiseNot", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 }
 
@@ -10341,7 +10341,7 @@ void benchmark_RPP_HIP_BitwiseXor_Batched(const vector<Mat>& imgs, bool isColor,
     CHECK_HIP_STATUS(hipFree(d_output));
     CHECK_HIP_STATUS(hipHostFree(roiTensor));
 
-    printResult("RPP HIP BitwiseXor (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH BitwiseXor", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 }
 
@@ -10440,7 +10440,7 @@ void benchmark_RPP_HIP_Erase_Batched(const vector<Mat>& imgs, bool isColor, int 
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP Erase (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Erase", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "numBoxes=" + to_string(numBoxes));
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -10543,7 +10543,7 @@ void benchmark_RPP_HIP_RandomErase_Batched(const vector<Mat>& imgs, bool isColor
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP RandomErase (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH RandomErase", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -10645,7 +10645,7 @@ void benchmark_RPP_HIP_CoarseDropout_Batched(const vector<Mat>& imgs, bool isCol
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP CoarseDropout (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH CoarseDropout", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "dropSize=" + to_string(dropSize));
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -10749,7 +10749,7 @@ void benchmark_RPP_HIP_GridDropout_Batched(const vector<Mat>& imgs, bool isColor
 
     ostringstream params;
     params << "tileWidth=" << tileWidth << ", tileHeight=" << tileHeight;
-    printResult("RPP HIP GridDropout (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH GridDropout", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -10854,7 +10854,7 @@ void benchmark_RPP_HIP_Gridmask_Batched(const vector<Mat>& imgs, bool isColor, i
 
     ostringstream params;
     params << "tileWidth=" << tileWidth << ", ratio=" << ratio;
-    printResult("RPP HIP Gridmask (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Gridmask", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -10933,7 +10933,7 @@ void benchmark_RPP_HIP_ChannelDropout_Batched(const vector<Mat>& imgs, bool isCo
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP ChannelDropout (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH ChannelDropout", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "dropoutProb=" + to_string(dropoutProb));
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -11038,7 +11038,7 @@ void benchmark_RPP_HIP_CutoutDropout_Batched(const vector<Mat>& imgs, bool isCol
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP CutoutDropout (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH CutoutDropout", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "numBoxes=" + to_string(numBoxes));
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -11096,7 +11096,7 @@ void benchmark_RPP_HIP_Copy_Batched(const vector<Mat>& imgs, bool isColor, rppHa
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP Copy (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Copy", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -11175,7 +11175,7 @@ void benchmark_RPP_HIP_Slice_Batched(const vector<Mat>& imgs, bool isColor, rppH
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP Slice (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Slice", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -11253,7 +11253,7 @@ void benchmark_RPP_HIP_ChannelPermute_Batched(const vector<Mat>& imgs, bool isCo
 
     ostringstream params;
     if (isColor) params << "permutation=BGR->RGB";
-    printResult("RPP HIP ChannelPermute (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH ChannelPermute", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -11359,7 +11359,7 @@ void benchmark_RPP_HIP_Transpose_Batched(const vector<Mat>& imgs, bool isColor, 
 
     ostringstream params;
     params << "permutation=0,2,1,3";
-    printResult("RPP HIP Transpose (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Transpose", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -11431,7 +11431,7 @@ void benchmark_RPP_HIP_LUT_Batched(const vector<Mat>& imgs, bool isColor, rppHan
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP LUT (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH LUT", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -11499,7 +11499,7 @@ void benchmark_RPP_HIP_Magnitude_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP Magnitude (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Magnitude", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 
     CHECK_HIP_STATUS(hipFree(d_input1));
@@ -11584,7 +11584,7 @@ void benchmark_RPP_HIP_FusedMultiplyAddScalar_Batched(const vector<Mat>& imgs, b
 
     ostringstream params;
     params << "mul=" << mulVal << ",add=" << addVal;
-    printResult("RPP HIP FusedMultiplyAddScalar (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH FusedMultiplyAddScalar", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     CHECK_HIP_STATUS(hipFree(d_inputF32));
@@ -11683,7 +11683,7 @@ void benchmark_RPP_HIP_Remap_Batched(const vector<Mat>& imgs, bool isColor, rppH
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP Remap (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Remap", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "interpolation=bilinear");
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -11780,7 +11780,7 @@ void benchmark_RPP_HIP_Phase_Batched(const vector<Mat>& imgs, bool isColor, rppH
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP Phase (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Phase", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 
     CHECK_HIP_STATUS(hipFree(d_input1));
@@ -11871,7 +11871,7 @@ void benchmark_RPP_HIP_Normalize_Batched(const vector<Mat>& imgs, bool isColor, 
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP Normalize (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH Normalize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 
     CHECK_HIP_STATUS(hipFree(d_inputBuffer));
@@ -11975,7 +11975,7 @@ void benchmark_RPP_HIP_CropAndPatch_Batched(const vector<Mat>& imgs, bool isColo
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP CropAndPatch (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH CropAndPatch", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "center_quarter");
 
     CHECK_HIP_STATUS(hipFree(d_input1));
@@ -12087,7 +12087,7 @@ void benchmark_RPP_HIP_CropMirrorNormalize_Batched(const vector<Mat>& imgs, bool
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP CropMirrorNormalize (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH CropMirrorNormalize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "crop_half+flip+normalize");
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -12196,7 +12196,7 @@ void benchmark_RPP_HIP_ResizeMirrorNormalize_Batched(const vector<Mat>& imgs, bo
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP ResizeMirrorNormalize (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH ResizeMirrorNormalize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "resize_half+flip+normalize");
 
     CHECK_HIP_STATUS(hipFree(d_input));
@@ -12286,7 +12286,7 @@ void benchmark_RPP_HIP_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool is
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HIP ResizeCropMirror (Batched)", imgs.size(), isColor,
+    printResult("RPP HIP BATCH ResizeCropMirror", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "resize+crop+flip");
 
     CHECK_HIP_STATUS(hipFree(d_input));

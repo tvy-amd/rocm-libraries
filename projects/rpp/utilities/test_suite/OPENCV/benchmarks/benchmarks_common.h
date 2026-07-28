@@ -80,12 +80,13 @@ struct BenchmarkResult {
     double opencvTime;
     double rppHostTime;
     double rppHipTime;
-    double hostSpeedup;
-    double hipSpeedup;
+    double rppHostBatchTime;
+    double rppHipBatchTime;
 
     BenchmarkResult(const string& name, const string& params, double cvTime, double rHostTime,
                     double rHipTime, const string& imgSize = "", const string& dataType = "",
-                    int batch = 0, int runs = 0)
+                    int batch = 0, int runs = 0, double rHostBatchTime = 0.0,
+                    double rHipBatchTime = 0.0)
         : operationName(name),
           parameters(params),
           imageSize(imgSize),
@@ -94,9 +95,9 @@ struct BenchmarkResult {
           numRuns(runs),
           opencvTime(cvTime),
           rppHostTime(rHostTime),
-          rppHipTime(rHipTime) {
-        hostSpeedup = (rHostTime > 0) ? (cvTime / rHostTime) : 0.0;
-        hipSpeedup = (rHipTime > 0) ? (cvTime / rHipTime) : 0.0;
+          rppHipTime(rHipTime),
+          rppHostBatchTime(rHostBatchTime),
+          rppHipBatchTime(rHipBatchTime) {
     }
 };
 

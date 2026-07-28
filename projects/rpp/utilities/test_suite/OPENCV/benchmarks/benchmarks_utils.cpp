@@ -87,14 +87,21 @@ struct BenchmarkData {
     double rppHostTime;
     double rppHipTime;
     double opencvTime;
+    double rppHostBatchTime;
+    double rppHipBatchTime;
     string parameters;
     bool rppHostCalled;
     bool rppHipCalled;
     bool opencvCalled;
+    bool rppHostBatchCalled;
+    bool rppHipBatchCalled;
+    bool resultCreated;
+    int resultIndex;  // Index in results vector, -1 if not created
 
     BenchmarkData()
-        : rppHostTime(0), rppHipTime(0), opencvTime(0), parameters(""),
-          rppHostCalled(false), rppHipCalled(false), opencvCalled(false) {}
+        : rppHostTime(0), rppHipTime(0), opencvTime(0), rppHostBatchTime(0), rppHipBatchTime(0),
+          parameters(""), rppHostCalled(false), rppHipCalled(false), opencvCalled(false),
+          rppHostBatchCalled(false), rppHipBatchCalled(false), resultCreated(false), resultIndex(-1) {}
 };
 
 static map<string, BenchmarkData> benchmarkTimes;  // operationName -> data
@@ -112,17 +119,30 @@ void printResult(const string& name, int batchSize, bool isColor, double totalMs
     string opName = name;
     string prefix;
 
-    if (opName.find("RPP HIP ") == 0) {
-        prefix = "RPP HIP ";
-        opName = opName.substr(8);
-    } else if (opName.find("RPP HOST ") == 0) {
-        prefix = "RPP HOST ";
-        opName = opName.substr(9);
+    // Check for prefixes in order (longest first to avoid mis-matching)
+    const string RPP_HIP_BATCH_PREFIX = "RPP HIP BATCH ";
+    const string RPP_HIP_PREFIX = "RPP HIP ";
+    const string RPP_HOST_BATCH_PREFIX = "RPP HOST BATCH ";
+    const string RPP_HOST_PREFIX = "RPP HOST ";
+    const string OPENCV_PREFIX = "OpenCV ";
+
+    if (opName.find(RPP_HIP_BATCH_PREFIX) == 0) {
+        prefix = RPP_HIP_BATCH_PREFIX;
+        opName = opName.substr(RPP_HIP_BATCH_PREFIX.length());
+    } else if (opName.find(RPP_HIP_PREFIX) == 0) {
+        prefix = RPP_HIP_PREFIX;
+        opName = opName.substr(RPP_HIP_PREFIX.length());
+    } else if (opName.find(RPP_HOST_BATCH_PREFIX) == 0) {
+        prefix = RPP_HOST_BATCH_PREFIX;
+        opName = opName.substr(RPP_HOST_BATCH_PREFIX.length());
+    } else if (opName.find(RPP_HOST_PREFIX) == 0) {
+        prefix = RPP_HOST_PREFIX;
+        opName = opName.substr(RPP_HOST_PREFIX.length());
         currentOperation = opName;
         currentIsColor = isColor;
-    } else if (opName.find("OpenCV ") == 0) {
-        prefix = "OpenCV ";
-        opName = opName.substr(7);
+    } else if (opName.find(OPENCV_PREFIX) == 0) {
+        prefix = OPENCV_PREFIX;
+        opName = opName.substr(OPENCV_PREFIX.length());
     } else {
         return;
     }
@@ -142,31 +162,62 @@ void printResult(const string& name, int batchSize, bool isColor, double totalMs
     string key = displayName + "|" + (isColor ? "rgb" : "gray");
     auto& data = benchmarkTimes[key];
 
-    if (prefix == "RPP HOST ") {
+    if (prefix == RPP_HOST_PREFIX) {
         data.rppHostTime = avgTime;
         data.rppHostCalled = true;
         data.parameters = params;
-    } else if (prefix == "RPP HIP ") {
+    } else if (prefix == RPP_HOST_BATCH_PREFIX) {
+        data.rppHostBatchTime = avgTime;
+        data.rppHostBatchCalled = true;
+        if (data.parameters.empty())
+            data.parameters = params;
+    } else if (prefix == RPP_HIP_PREFIX) {
         data.rppHipTime = avgTime;
         data.rppHipCalled = true;
         if (data.parameters.empty())
             data.parameters = params;
-    } else if (prefix == "OpenCV ") {
+    } else if (prefix == RPP_HIP_BATCH_PREFIX) {
+        data.rppHipBatchTime = avgTime;
+        data.rppHipBatchCalled = true;
+        if (data.parameters.empty())
+            data.parameters = params;
+    } else if (prefix == OPENCV_PREFIX) {
         data.opencvTime = avgTime;
         data.opencvCalled = true;
         if (data.parameters.empty())
             data.parameters = params;
     }
 
-    if (data.opencvCalled && data.rppHostCalled && data.rppHipCalled) {
-        if (isColor)
+    // Create result when we have the base three benchmarks
+    if (data.opencvCalled && data.rppHostCalled && data.rppHipCalled && !data.resultCreated) {
+        if (isColor) {
             rgbResults.emplace_back(displayName, data.parameters, data.opencvTime,
                                     data.rppHostTime, data.rppHipTime, rgbImageSize,
-                                    rgbImageDtype, rgbBatchSize, NUM_RUNS);
-        else
+                                    rgbImageDtype, rgbBatchSize, NUM_RUNS,
+                                    data.rppHostBatchTime, data.rppHipBatchTime);
+            data.resultIndex = rgbResults.size() - 1;
+        } else {
             grayscaleResults.emplace_back(displayName, data.parameters, data.opencvTime,
                                           data.rppHostTime, data.rppHipTime, grayImageSize,
-                                          grayImageDtype, grayBatchSize, NUM_RUNS);
+                                          grayImageDtype, grayBatchSize, NUM_RUNS,
+                                          data.rppHostBatchTime, data.rppHipBatchTime);
+            data.resultIndex = grayscaleResults.size() - 1;
+        }
+        data.resultCreated = true;
+    }
+    // Update existing result if batch times are added later
+    else if (data.resultCreated && data.resultIndex >= 0) {
+        if (prefix == RPP_HOST_BATCH_PREFIX || prefix == RPP_HIP_BATCH_PREFIX) {
+            if (isColor && data.resultIndex < (int)rgbResults.size()) {
+                auto& result = rgbResults[data.resultIndex];
+                result.rppHostBatchTime = data.rppHostBatchTime;
+                result.rppHipBatchTime = data.rppHipBatchTime;
+            } else if (!isColor && data.resultIndex < (int)grayscaleResults.size()) {
+                auto& result = grayscaleResults[data.resultIndex];
+                result.rppHostBatchTime = data.rppHostBatchTime;
+                result.rppHipBatchTime = data.rppHipBatchTime;
+            }
+        }
     }
 }
 
@@ -536,6 +587,9 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_write_string(info_sheet, row, 0, "GPU", info_label_format);
     worksheet_write_string(info_sheet, row++, 1, getGPUInfo().c_str(), NULL);
 
+    worksheet_write_string(info_sheet, row, 0, "Maximum Available Threads", info_label_format);
+    worksheet_write_number(info_sheet, row++, 1, omp_get_max_threads(), NULL);
+
     worksheet_write_string(info_sheet, row, 0, "Number of Threads", info_label_format);
     worksheet_write_number(info_sheet, row++, 1, NUM_THREADS, NULL);
 
@@ -550,7 +604,7 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_set_column(gray_sheet, 2, 2, 15, NULL);
     worksheet_set_column(gray_sheet, 3, 3, 12, NULL);
     worksheet_set_column(gray_sheet, 4, 5, 12, NULL);
-    worksheet_set_column(gray_sheet, 6, 10, 15, NULL);
+    worksheet_set_column(gray_sheet, 6, 10, 18, NULL);
 
     row = 0;
     worksheet_write_string(gray_sheet, row, 0, "Operation", header_format);
@@ -562,8 +616,8 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_write_string(gray_sheet, row, 6, "OpenCV (avg ms)", header_format);
     worksheet_write_string(gray_sheet, row, 7, "RPP HOST (avg ms)", header_format);
     worksheet_write_string(gray_sheet, row, 8, "RPP HIP (avg ms)", header_format);
-    worksheet_write_string(gray_sheet, row, 9, "HOST Speedup", header_format);
-    worksheet_write_string(gray_sheet, row++, 10, "HIP Speedup", header_format);
+    worksheet_write_string(gray_sheet, row, 9, "RPP HOST BATCH (avg ms)", header_format);
+    worksheet_write_string(gray_sheet, row++, 10, "RPP HIP BATCH (avg ms)", header_format);
 
     for (const auto& result : grayResults) {
         worksheet_write_string(gray_sheet, row, 0, result.operationName.c_str(), NULL);
@@ -575,8 +629,8 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
         worksheet_write_number(gray_sheet, row, 6, result.opencvTime, time_format);
         worksheet_write_number(gray_sheet, row, 7, result.rppHostTime, time_format);
         worksheet_write_number(gray_sheet, row, 8, result.rppHipTime, time_format);
-        worksheet_write_number(gray_sheet, row, 9, result.hostSpeedup, speedup_format);
-        worksheet_write_number(gray_sheet, row, 10, result.hipSpeedup, speedup_format);
+        worksheet_write_number(gray_sheet, row, 9, result.rppHostBatchTime, time_format);
+        worksheet_write_number(gray_sheet, row, 10, result.rppHipBatchTime, time_format);
         row++;
     }
 
@@ -588,7 +642,7 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_set_column(rgb_sheet, 2, 2, 15, NULL);
     worksheet_set_column(rgb_sheet, 3, 3, 12, NULL);
     worksheet_set_column(rgb_sheet, 4, 5, 12, NULL);
-    worksheet_set_column(rgb_sheet, 6, 10, 15, NULL);
+    worksheet_set_column(rgb_sheet, 6, 10, 18, NULL);
 
     row = 0;
     worksheet_write_string(rgb_sheet, row, 0, "Operation", header_format);
@@ -600,8 +654,8 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_write_string(rgb_sheet, row, 6, "OpenCV (avg ms)", header_format);
     worksheet_write_string(rgb_sheet, row, 7, "RPP HOST (avg ms)", header_format);
     worksheet_write_string(rgb_sheet, row, 8, "RPP HIP (avg ms)", header_format);
-    worksheet_write_string(rgb_sheet, row, 9, "HOST Speedup", header_format);
-    worksheet_write_string(rgb_sheet, row++, 10, "HIP Speedup", header_format);
+    worksheet_write_string(rgb_sheet, row, 9, "RPP HOST BATCH (avg ms)", header_format);
+    worksheet_write_string(rgb_sheet, row++, 10, "RPP HIP BATCH (avg ms)", header_format);
 
     for (const auto& result : colorResults) {
         worksheet_write_string(rgb_sheet, row, 0, result.operationName.c_str(), NULL);
@@ -613,8 +667,8 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
         worksheet_write_number(rgb_sheet, row, 6, result.opencvTime, time_format);
         worksheet_write_number(rgb_sheet, row, 7, result.rppHostTime, time_format);
         worksheet_write_number(rgb_sheet, row, 8, result.rppHipTime, time_format);
-        worksheet_write_number(rgb_sheet, row, 9, result.hostSpeedup, speedup_format);
-        worksheet_write_number(rgb_sheet, row, 10, result.hipSpeedup, speedup_format);
+        worksheet_write_number(rgb_sheet, row, 9, result.rppHostBatchTime, time_format);
+        worksheet_write_number(rgb_sheet, row, 10, result.rppHipBatchTime, time_format);
         row++;
     }
 

@@ -3140,8 +3140,11 @@ void benchmark_RPP_HOST_Flip_Batched(const vector<Mat>& imgs, bool isColor, int 
     free(verticalTensor);
     free(roiTensor);
 
-    printResult("RPP HOST Flip (Batched)", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "flipCode=" + to_string(flipCode));
+    string name = (flipCode == 1) ? "Horizontal" : (flipCode == 0) ? "Vertical" : "Both";
+    ostringstream params;
+    params << "type=" << name;
+    printResult("RPP HOST BATCH Flip", imgs.size(), isColor,
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 // This file contains the batched implementations to match HIP backend
@@ -3207,7 +3210,7 @@ void benchmark_RPP_HOST_Resize_Batched(const vector<Mat>& imgs, bool isColor, in
 
     ostringstream params;
     params << "type=" << interpName << ", size=" << dstW << "x" << dstH;
-    printResult("RPP HOST Resize (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Resize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -3268,7 +3271,7 @@ void benchmark_RPP_HOST_Crop_Batched(const vector<Mat>& imgs, bool isColor, int 
 
     ostringstream params;
     params << "size=" << cropW << "x" << cropH;
-    printResult("RPP HOST Crop (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Crop", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -3329,7 +3332,7 @@ void benchmark_RPP_HOST_Rotate_Batched(const vector<Mat>& imgs, bool isColor, fl
 
     ostringstream params;
     params << "angle=" << angleDeg << "deg";
-    printResult("RPP HOST Rotate (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Rotate", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -3385,7 +3388,7 @@ void benchmark_RPP_HOST_BoxFilter_Batched(const vector<Mat>& imgs, bool isColor,
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST BoxFilter (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH BoxFilter", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
@@ -3445,7 +3448,7 @@ void benchmark_RPP_HOST_GaussianFilter_Batched(const vector<Mat>& imgs, bool isC
     free(stdDevTensor);
     free(roiTensor);
 
-    printResult("RPP HOST GaussianFilter (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH GaussianFilter", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
@@ -3502,7 +3505,7 @@ void benchmark_RPP_HOST_MedianFilter_Batched(const vector<Mat>& imgs, bool isCol
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST MedianFilter (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH MedianFilter", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
@@ -3561,7 +3564,7 @@ void benchmark_RPP_HOST_SobelFilter_Batched(const vector<Mat>& imgs, bool isColo
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST SobelFilter (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH SobelFilter", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "type=" + to_string(sobelType));
 }
 
@@ -3616,7 +3619,7 @@ void benchmark_RPP_HOST_HistogramEqualize_Batched(const vector<Mat>& imgs, bool 
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST HistogramEqualize (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH HistogramEqualize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -3673,7 +3676,7 @@ void benchmark_RPP_HOST_Hue_Batched(const vector<Mat>& imgs, bool isColor, float
     free(hueTensor);
     free(roiTensor);
 
-    printResult("RPP HOST Hue (Batched)", imgs.size(), true,
+    printResult("RPP HOST BATCH Hue", imgs.size(), true,
                 duration<double, milli>(end - start).count(), "hueDelta=" + to_string(hueDelta));
 }
 
@@ -3730,7 +3733,7 @@ void benchmark_RPP_HOST_Saturation_Batched(const vector<Mat>& imgs, bool isColor
     free(saturationTensor);
     free(roiTensor);
 
-    printResult("RPP HOST Saturation (Batched)", imgs.size(), true,
+    printResult("RPP HOST BATCH Saturation", imgs.size(), true,
                 duration<double, milli>(end - start).count(), "factor=" + to_string(satFactor));
 }
 
@@ -3776,7 +3779,7 @@ void benchmark_RPP_HOST_ColorToGreyscale_Batched(const vector<Mat>& imgs, bool i
     free(input);
     free(output);
 
-    printResult("RPP HOST ColorToGreyscale (Batched)", imgs.size(), true,
+    printResult("RPP HOST BATCH ColorToGreyscale", imgs.size(), true,
                 duration<double, milli>(end - start).count());
 }
 
@@ -3839,7 +3842,7 @@ void benchmark_RPP_HOST_Brightness_Batched(const vector<Mat>& imgs, bool isColor
 
     ostringstream params;
     params << "alpha=" << alpha << ", beta=" << beta;
-    printResult("RPP HOST Brightness (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Brightness", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -3900,7 +3903,7 @@ void benchmark_RPP_HOST_Contrast_Batched(const vector<Mat>& imgs, bool isColor, 
     free(contrastCenterTensor);
     free(roiTensor);
 
-    printResult("RPP HOST Contrast (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Contrast", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(),
                 "factor=" + to_string(contrastFactor) + ", center=" + to_string(contrastCenter));
 }
@@ -3962,7 +3965,7 @@ void benchmark_RPP_HOST_Emboss_Batched(const vector<Mat>& imgs, bool isColor, in
 
     ostringstream params;
     params << "kernel=" << kernelSize << ", strength=" << strength;
-    printResult("RPP HOST Emboss (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Emboss", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -4039,7 +4042,7 @@ void benchmark_RPP_HOST_AddScalar_Batched(const vector<Mat>& imgs, bool isColor,
     free(roiTensor);
     free(roi3dTensor);
 
-    printResult("RPP HOST AddScalar (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH AddScalar", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "value=" + to_string((int)addVal));
 }
 
@@ -4116,7 +4119,7 @@ void benchmark_RPP_HOST_SubtractScalar_Batched(const vector<Mat>& imgs, bool isC
     free(roiTensor);
     free(roi3dTensor);
 
-    printResult("RPP HOST SubtractScalar (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH SubtractScalar", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "value=" + to_string((int)subVal));
 }
 
@@ -4193,7 +4196,7 @@ void benchmark_RPP_HOST_MultiplyScalar_Batched(const vector<Mat>& imgs, bool isC
     free(roiTensor);
     free(roi3dTensor);
 
-    printResult("RPP HOST MultiplyScalar (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH MultiplyScalar", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "value=" + to_string(mulVal));
 }
 
@@ -4256,7 +4259,7 @@ void benchmark_RPP_HOST_GaussianNoise_Batched(const vector<Mat>& imgs, bool isCo
     free(stddevTensor);
     free(roiTensor);
 
-    printResult("RPP HOST GaussianNoise (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH GaussianNoise", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(),
                 "mean=" + to_string(mean) + ", stddev=" + to_string(stddev));
 }
@@ -4328,7 +4331,7 @@ void benchmark_RPP_HOST_SaltAndPepperNoise_Batched(const vector<Mat>& imgs, bool
     free(pepperValueTensor);
     free(roiTensor);
 
-    printResult("RPP HOST SaltAndPepperNoise (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH SaltAndPepperNoise", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "probability=" + to_string(noiseProb));
 }
 
@@ -4387,7 +4390,7 @@ void benchmark_RPP_HOST_NoiseShot_Batched(const vector<Mat>& imgs, bool isColor,
     free(shotNoiseTensor);
     free(roiTensor);
 
-    printResult("RPP HOST NoiseShot (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH NoiseShot", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "factor=" + to_string(shotNoiseFactor));
 }
 
@@ -4453,7 +4456,7 @@ void benchmark_RPP_HOST_ColorCast_Batched(const vector<Mat>& imgs, bool isColor,
 
     ostringstream params;
     params << "R=" << rShift << ", G=" << gShift << ", B=" << bShift;
-    printResult("RPP HOST ColorCast (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH ColorCast", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
 
@@ -4512,7 +4515,7 @@ void benchmark_RPP_HOST_ColorTemperature_Batched(const vector<Mat>& imgs, bool i
     free(adjustmentTensor);
     free(roiTensor);
 
-    printResult("RPP HOST ColorTemperature (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH ColorTemperature", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "adjustment=" + to_string(adjustmentValue));
 }
 
@@ -4573,7 +4576,7 @@ void benchmark_RPP_HOST_ColorTwist_Batched(const vector<Mat>& imgs, bool isColor
 
     ostringstream params;
     params << "hue=" << hueShift[0] << ", sat=" << satFactor[0];
-    printResult("RPP HOST ColorTwist (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH ColorTwist", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -4640,7 +4643,7 @@ void benchmark_RPP_HOST_Vignette_Batched(const vector<Mat>& imgs, bool isColor, 
     free(intensityTensor);
     free(roiTensor);
 
-    printResult("RPP HOST Vignette (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Vignette", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "intensity=" + to_string(vignetteIntensity));
 }
 
@@ -4705,7 +4708,7 @@ void benchmark_RPP_HOST_NonLinearBlend_Batched(const vector<Mat>& imgs, bool isC
     free(stdDevTensor);
     free(roiTensor);
 
-    printResult("RPP HOST NonLinearBlend (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH NonLinearBlend", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "stdDev=" + to_string(stdDev));
 }
 
@@ -4764,7 +4767,7 @@ void benchmark_RPP_HOST_Posterize_Batched(const vector<Mat>& imgs, bool isColor,
     free(posterizeLevelBits);
     free(roiTensor);
 
-    printResult("RPP HOST Posterize (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Posterize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "levelBits=" + to_string(levelBits));
 }
 
@@ -4823,7 +4826,7 @@ void benchmark_RPP_HOST_Solarize_Batched(const vector<Mat>& imgs, bool isColor, 
     free(thresholdTensor);
     free(roiTensor);
 
-    printResult("RPP HOST Solarize (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Solarize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "threshold=" + to_string(threshold));
 }
 
@@ -4886,7 +4889,7 @@ void benchmark_RPP_HOST_Glitch_Batched(const vector<Mat>& imgs, bool isColor, rp
     free(rgbOffsets);
     free(roiTensor);
 
-    printResult("RPP HOST Glitch (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Glitch", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -4940,7 +4943,7 @@ void benchmark_RPP_HOST_JpegCompressionDistortion_Batched(const vector<Mat>& img
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST JpegCompressionDistortion (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH JpegCompressionDistortion", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "quality=" + to_string(quality));
 
     free(input);
@@ -4998,7 +5001,7 @@ void benchmark_RPP_HOST_TensorMin_Batched(const vector<Mat>& imgs, bool isColor,
     free(minOutputs);
     free(roiTensor);
 
-    printResult("RPP HOST TensorMin (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH TensorMin", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5051,7 +5054,7 @@ void benchmark_RPP_HOST_TensorMax_Batched(const vector<Mat>& imgs, bool isColor,
     free(maxOutputs);
     free(roiTensor);
 
-    printResult("RPP HOST TensorMax (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH TensorMax", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5104,7 +5107,7 @@ void benchmark_RPP_HOST_TensorSum_Batched(const vector<Mat>& imgs, bool isColor,
     free(sumOutputs);
     free(roiTensor);
 
-    printResult("RPP HOST TensorSum (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH TensorSum", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5157,7 +5160,7 @@ void benchmark_RPP_HOST_TensorMean_Batched(const vector<Mat>& imgs, bool isColor
     free(meanOutputs);
     free(roiTensor);
 
-    printResult("RPP HOST TensorMean (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH TensorMean", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5216,7 +5219,7 @@ void benchmark_RPP_HOST_TensorStddev_Batched(const vector<Mat>& imgs, bool isCol
     free(meanOutputs);
     free(roiTensor);
 
-    printResult("RPP HOST TensorStddev (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH TensorStddev", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5284,7 +5287,7 @@ void benchmark_RPP_HOST_Threshold_Batched(const vector<Mat>& imgs, bool isColor,
     free(maxTensor);
     free(roiTensor);
 
-    printResult("RPP HOST Threshold (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Threshold", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "threshold=" + to_string(thresh));
 }
 
@@ -5349,7 +5352,7 @@ void benchmark_RPP_HOST_WarpAffine_Batched(const vector<Mat>& imgs, bool isColor
     free(affineTensor);
     free(roiTensor);
 
-    printResult("RPP HOST WarpAffine (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH WarpAffine", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5417,7 +5420,7 @@ void benchmark_RPP_HOST_WarpPerspective_Batched(const vector<Mat>& imgs, bool is
     free(perspectiveTensor);
     free(roiTensor);
 
-    printResult("RPP HOST WarpPerspective (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH WarpPerspective", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5472,7 +5475,7 @@ void benchmark_RPP_HOST_Fisheye_Batched(const vector<Mat>& imgs, bool isColor, r
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST Fisheye (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Fisheye", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5566,7 +5569,7 @@ void benchmark_RPP_HOST_LensCorrection_Batched(const vector<Mat>& imgs, bool isC
     free(rowRemapTable);
     free(colRemapTable);
 
-    printResult("RPP HOST LensCorrection (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH LensCorrection", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5625,7 +5628,7 @@ void benchmark_RPP_HOST_GammaCorrection_Batched(const vector<Mat>& imgs, bool is
     free(gammaTensor);
     free(roiTensor);
 
-    printResult("RPP HOST GammaCorrection (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH GammaCorrection", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "gamma=" + to_string(gamma));
 }
 
@@ -5684,7 +5687,7 @@ void benchmark_RPP_HOST_Exposure_Batched(const vector<Mat>& imgs, bool isColor, 
     free(exposureTensor);
     free(roiTensor);
 
-    printResult("RPP HOST Exposure (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Exposure", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "factor=" + to_string(exposureFactor));
 }
 
@@ -5752,7 +5755,7 @@ void benchmark_RPP_HOST_Blend_Batched(const vector<Mat>& imgs, bool isColor, flo
     free(alphaTensor);
     free(roiTensor);
 
-    printResult("RPP HOST Blend (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Blend", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "alpha=" + to_string(alpha));
 }
 
@@ -5807,7 +5810,7 @@ void benchmark_RPP_HOST_Erode_Batched(const vector<Mat>& imgs, bool isColor, int
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST Erode (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Erode", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
@@ -5862,7 +5865,7 @@ void benchmark_RPP_HOST_Dilate_Batched(const vector<Mat>& imgs, bool isColor, in
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST Dilate (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Dilate", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
 }
 
@@ -5922,7 +5925,7 @@ void benchmark_RPP_HOST_BitwiseAnd_Batched(const vector<Mat>& imgs, bool isColor
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST BitwiseAnd (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH BitwiseAnd", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -5982,7 +5985,7 @@ void benchmark_RPP_HOST_BitwiseOr_Batched(const vector<Mat>& imgs, bool isColor,
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST BitwiseOr (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH BitwiseOr", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -6037,7 +6040,7 @@ void benchmark_RPP_HOST_BitwiseNot_Batched(const vector<Mat>& imgs, bool isColor
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST BitwiseNot (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH BitwiseNot", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -6097,7 +6100,7 @@ void benchmark_RPP_HOST_BitwiseXor_Batched(const vector<Mat>& imgs, bool isColor
     free(output);
     free(roiTensor);
 
-    printResult("RPP HOST BitwiseXor (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH BitwiseXor", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 }
 
@@ -6185,7 +6188,7 @@ void benchmark_RPP_HOST_GridDropout_Batched(const vector<Mat>& imgs, bool isColo
 
     ostringstream params;
     params << "tileWidth=" << tileWidth << ", tileHeight=" << tileHeight;
-    printResult("RPP HOST GridDropout (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH GridDropout", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -6252,7 +6255,7 @@ void benchmark_RPP_HOST_Gridmask_Batched(const vector<Mat>& imgs, bool isColor, 
 
     ostringstream params;
     params << "tileWidth=" << tileWidth << ", ratio=" << ratio;
-    printResult("RPP HOST Gridmask (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Gridmask", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -6315,7 +6318,7 @@ void benchmark_RPP_HOST_ChannelDropout_Batched(const vector<Mat>& imgs, bool isC
 
     ostringstream params;
     params << "dropoutProb=" << dropoutProb;
-    printResult("RPP HOST ChannelDropout (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH ChannelDropout", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -6397,7 +6400,7 @@ void benchmark_RPP_HOST_CutoutDropout_Batched(const vector<Mat>& imgs, bool isCo
 
     ostringstream params;
     params << "numBoxes=" << numBoxes;
-    printResult("RPP HOST CutoutDropout (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH CutoutDropout", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -6484,7 +6487,7 @@ void benchmark_RPP_HOST_Erase_Batched(const vector<Mat>& imgs, bool isColor, int
 
     ostringstream params;
     params << "numBoxes=" << numBoxes;
-    printResult("RPP HOST Erase (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Erase", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -6572,7 +6575,7 @@ void benchmark_RPP_HOST_RandomErase_Batched(const vector<Mat>& imgs, bool isColo
 
     ostringstream params;
     params << "numBoxes=" << numBoxes;
-    printResult("RPP HOST RandomErase (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH RandomErase", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -6657,7 +6660,7 @@ void benchmark_RPP_HOST_CoarseDropout_Batched(const vector<Mat>& imgs, bool isCo
 
     ostringstream params;
     params << "dropSize=" << dropSize;
-    printResult("RPP HOST CoarseDropout (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH CoarseDropout", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -6706,7 +6709,7 @@ void benchmark_RPP_HOST_Copy_Batched(const vector<Mat>& imgs, bool isColor, rppH
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST Copy (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Copy", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 
     free(input);
@@ -6792,7 +6795,7 @@ void benchmark_RPP_HOST_Slice_Batched(const vector<Mat>& imgs, bool isColor, rpp
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST Slice (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Slice", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 
     free(input);
@@ -6858,7 +6861,7 @@ void benchmark_RPP_HOST_ChannelPermute_Batched(const vector<Mat>& imgs, bool isC
 
     ostringstream params;
     if (isColor) params << "permutation=BGR->RGB";
-    printResult("RPP HOST ChannelPermute (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH ChannelPermute", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -6940,7 +6943,7 @@ void benchmark_RPP_HOST_Transpose_Batched(const vector<Mat>& imgs, bool isColor,
 
     ostringstream params;
     params << "permutation=0,2,1,3";
-    printResult("RPP HOST Transpose (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Transpose", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(input);
@@ -7000,7 +7003,7 @@ void benchmark_RPP_HOST_LUT_Batched(const vector<Mat>& imgs, bool isColor, rppHa
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST LUT (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH LUT", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 
     free(input);
@@ -7062,7 +7065,7 @@ void benchmark_RPP_HOST_Magnitude_Batched(const vector<Mat>& imgs, bool isColor,
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST Magnitude (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Magnitude", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "");
 
     free(input1);
@@ -7135,7 +7138,7 @@ void benchmark_RPP_HOST_FusedMultiplyAddScalar_Batched(const vector<Mat>& imgs, 
 
     ostringstream params;
     params << "mul=" << mulVal << ",add=" << addVal;
-    printResult("RPP HOST FusedMultiplyAddScalar (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH FusedMultiplyAddScalar", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
     free(inputF32);
@@ -7206,7 +7209,7 @@ void benchmark_RPP_HOST_Remap_Batched(const vector<Mat>& imgs, bool isColor, rpp
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST Remap (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Remap", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "interpolation=bilinear");
 
     free(input);
@@ -7273,7 +7276,7 @@ void benchmark_RPP_HOST_Phase_Batched(const vector<Mat>& imgs, bool isColor, rpp
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST Phase (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Phase", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 
     free(input1);
@@ -7354,7 +7357,7 @@ void benchmark_RPP_HOST_Normalize_Batched(const vector<Mat>& imgs, bool isColor,
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST Normalize (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH Normalize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count());
 
     free(inputBuffer);
@@ -7438,7 +7441,7 @@ void benchmark_RPP_HOST_CropAndPatch_Batched(const vector<Mat>& imgs, bool isCol
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST CropAndPatch (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH CropAndPatch", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "center_quarter");
 
     free(input1);
@@ -7532,7 +7535,7 @@ void benchmark_RPP_HOST_CropMirrorNormalize_Batched(const vector<Mat>& imgs, boo
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST CropMirrorNormalize (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH CropMirrorNormalize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "crop_half+flip+normalize");
 
     free(input);
@@ -7629,7 +7632,7 @@ void benchmark_RPP_HOST_ResizeMirrorNormalize_Batched(const vector<Mat>& imgs, b
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST ResizeMirrorNormalize (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH ResizeMirrorNormalize", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "resize_half+flip+normalize");
 
     free(input);
@@ -7709,7 +7712,7 @@ void benchmark_RPP_HOST_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool i
     }
     auto end = high_resolution_clock::now();
 
-    printResult("RPP HOST ResizeCropMirror (Batched)", imgs.size(), isColor,
+    printResult("RPP HOST BATCH ResizeCropMirror", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), "resize+crop+flip");
 
     free(input);
