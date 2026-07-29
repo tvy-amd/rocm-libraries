@@ -114,6 +114,14 @@ rocm_install(TARGETS rocsparse-unit-test COMPONENT tests)
 # ---------------------------------------------------------------------------
 set(ROCSPARSE_UNIT_TEST_DEVICE_SOURCES
   rocsparse_unit_test_main.cpp
+  unit_test_device_level1.cpp
+  unit_test_primitives.cpp
+  unit_test_host_level1.cpp
+  unit_test_host_level1_classic.cpp
+  unit_test_host_auxiliary.cpp
+  unit_test_host_info.cpp
+  unit_test_host_generic.cpp
+  unit_test_host_reordering.cpp
 )
 
 # Internal rocsparse::primitives building blocks under test. Like the host-pure
@@ -123,6 +131,14 @@ set(ROCSPARSE_UNIT_TEST_DEVICE_SOURCES
 # directly into this GPU test binary. They pull in rocprim, hence roc::rocprim
 # is added to the link libraries below. (No library source changes.)
 set(ROCSPARSE_UNIT_TEST_PRIMITIVE_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/unit_test_primitives_support.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../library/src/primitives/rocsparse_inclusive_scan.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../library/src/primitives/rocsparse_exclusive_scan.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../library/src/primitives/rocsparse_find_max.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../library/src/primitives/rocsparse_find_sum.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../library/src/primitives/rocsparse_run_length_encode.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../library/src/primitives/rocsparse_radix_sort_keys.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../library/src/primitives/rocsparse_radix_sort_pairs.cpp
 )
 
 add_executable(rocsparse-unit-test-device
