@@ -47,6 +47,7 @@ set(ROCSPARSE_UNIT_TEST_SOURCES
   unit_test_enum_traits.cpp
   unit_test_indextype_utils.cpp
   unit_test_datatype_utils.cpp
+  unit_test_csrmv_adaptive_analysis.cpp
 )
 
 # Host-pure library translation units under test. These are compiled directly
@@ -114,6 +115,7 @@ rocm_install(TARGETS rocsparse-unit-test COMPONENT tests)
 # ---------------------------------------------------------------------------
 set(ROCSPARSE_UNIT_TEST_DEVICE_SOURCES
   rocsparse_unit_test_main.cpp
+  unit_test_host_level2.cpp
 )
 
 # Internal rocsparse::primitives building blocks under test. Like the host-pure
