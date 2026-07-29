@@ -6181,6 +6181,12 @@ void benchmark_RPP_HIP_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, r
     int targetWidth = 224;
     int targetHeight = 224;
 
+    // Calculate crop parameters once (all images have same dimensions)
+    int cropWidth = (imgs[0].cols * 4) / 5;
+    int cropHeight = (imgs[0].rows * 4) / 5;
+    int cropX = (imgs[0].cols - cropWidth) / 2;
+    int cropY = (imgs[0].rows - cropHeight) / 2;
+
     for (int i = 0; i < num_images; ++i) {
         RpptLayout layout = (isColor && imgs[i].channels() == 3) ? RpptLayout::NHWC : RpptLayout::NCHW;
         set_descriptor_dims_and_strides_local(&srcDescs[i], 1, imgs[i].rows, imgs[i].cols, numChannels, 0);
@@ -6193,12 +6199,6 @@ void benchmark_RPP_HIP_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, r
         dstDescs[i].layout = layout;
         dstDescs[i].dataType = RpptDataType::U8;
         update_strides_from_layout(&dstDescs[i]);
-
-        // Set ROI (center 80% of image for crop before resize)
-        int cropWidth = (imgs[i].cols * 4) / 5;
-        int cropHeight = (imgs[i].rows * 4) / 5;
-        int cropX = (imgs[i].cols - cropWidth) / 2;
-        int cropY = (imgs[i].rows - cropHeight) / 2;
 
         // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
         roiTensor[i * 256].xywhROI.xy.x = cropX;
@@ -6266,7 +6266,7 @@ void benchmark_RPP_HIP_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, r
     CHECK_HIP_STATUS(hipHostFree(dstImgSizes));
 
     ostringstream params;
-    params << "crop=80%,resize=224x224,mirror=alternate";
+    params << "crop=80%,resize=224x224,mirror";
     printResult("RPP HIP ResizeCropMirror", imgs.size(), isColor, adjustedTime, params.str());
 }
 
@@ -12218,7 +12218,15 @@ void benchmark_RPP_HIP_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool is
     int height = imgs[0].rows;
     int width = imgs[0].cols;
 
-    int finalSize = 50;
+    // Target resize dimensions (224x224 to match non-batched version for fair comparison)
+    int targetWidth = 224;
+    int targetHeight = 224;
+
+    // Calculate center 80% crop region (same as non-batched)
+    int cropWidth = (width * 4) / 5;
+    int cropHeight = (height * 4) / 5;
+    int cropX = (width - cropWidth) / 2;
+    int cropY = (height - cropHeight) / 2;
 
     // Setup descriptors
     RpptDesc srcDesc, dstDesc;
@@ -12226,7 +12234,7 @@ void benchmark_RPP_HIP_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool is
     srcDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
     srcDesc.dataType = RpptDataType::U8;
     update_strides_from_layout(&srcDesc);
-    set_descriptor_dims_and_strides_local(&dstDesc, batchSize, finalSize, finalSize, channels, 0);
+    set_descriptor_dims_and_strides_local(&dstDesc, batchSize, targetHeight, targetWidth, channels, 0);
     dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
     dstDesc.dataType = RpptDataType::U8;
     update_strides_from_layout(&dstDesc);
@@ -12260,17 +12268,25 @@ void benchmark_RPP_HIP_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool is
     CHECK_HIP_STATUS(hipHostMalloc(&d_dstDesc, sizeof(RpptDesc)));
     CHECK_HIP_STATUS(hipHostMalloc(&dstImgSizes, batchSize * sizeof(RpptImagePatch)));
     CHECK_HIP_STATUS(hipHostMalloc(&mirrorTensor, batchSize * sizeof(Rpp32u)));
-    CHECK_HIP_STATUS(hipHostMalloc(&dstRoiTensor, batchSize * sizeof(RpptROI)));
+    // Allocate 256 ROI elements per image as workaround for kernel bug (same as non-batched)
+    CHECK_HIP_STATUS(hipHostMalloc(&dstRoiTensor, batchSize * 256 * sizeof(RpptROI)));
 
     *d_srcDesc = srcDesc;
     *d_dstDesc = dstDesc;
 
+    // Initialize ROI tensor to zero first (hipHostMalloc doesn't zero memory!)
+    memset(dstRoiTensor, 0, batchSize * 256 * sizeof(RpptROI));
+
     for (int i = 0; i < batchSize; i++) {
-        dstImgSizes[i].width = (width - 20) / 2;
-        dstImgSizes[i].height = (height - 20) / 2;
+        // Destination image size (after resize)
+        dstImgSizes[i].width = targetWidth;
+        dstImgSizes[i].height = targetHeight;
         mirrorTensor[i] = 1;
-        dstRoiTensor[i].xywhROI.roiWidth = finalSize;
-        dstRoiTensor[i].xywhROI.roiHeight = finalSize;
+        // Each image gets 256 ROI slots (only first is used, rest are buffer for buggy kernel)
+        dstRoiTensor[i * 256].xywhROI.xy.x = cropX;
+        dstRoiTensor[i * 256].xywhROI.xy.y = cropY;
+        dstRoiTensor[i * 256].xywhROI.roiWidth = cropWidth;
+        dstRoiTensor[i * 256].xywhROI.roiHeight = cropHeight;
     }
 
     // Benchmark loop
@@ -12286,8 +12302,10 @@ void benchmark_RPP_HIP_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool is
     CHECK_HIP_STATUS(hipStreamSynchronize(stream));
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "crop=80%,resize=224x224,mirror";
     printResult("RPP HIP BATCH ResizeCropMirror", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "resize+crop+flip");
+                duration<double, milli>(end - start).count(), params.str());
 
     CHECK_HIP_STATUS(hipFree(d_input));
     CHECK_HIP_STATUS(hipFree(d_output));

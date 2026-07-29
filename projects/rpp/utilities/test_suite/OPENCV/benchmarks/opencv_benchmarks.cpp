@@ -1472,24 +1472,35 @@ void benchmark_OpenCV_ResizeCropMirror(const vector<Mat>& imgs, bool isColor) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
 
+    // Target parameters (same as RPP versions for fair comparison)
+    int targetWidth = 224;
+    int targetHeight = 224;
+
+    // Calculate crop parameters once (all images have same dimensions)
+    int cropWidth = (imgs[0].cols * 4) / 5;
+    int cropHeight = (imgs[0].rows * 4) / 5;
+    int cropX = (imgs[0].cols - cropWidth) / 2;
+    int cropY = (imgs[0].rows - cropHeight) / 2;
+
     auto start = high_resolution_clock::now();
     for (int k = 0; k < NUM_RUNS; ++k) {
         for (int i = 0; i < num_images; ++i) {
+            // Crop center 80% from source
+            Mat cropped = imgs[i](Rect(cropX, cropY, cropWidth, cropHeight));
+
+            // Resize to target size
             Mat resized;
-            resize(imgs[i], resized, Size(imgs[i].cols / 2, imgs[i].rows / 2));
+            resize(cropped, resized, Size(targetWidth, targetHeight));
 
-            int cropW = resized.cols * 0.8;
-            int cropH = resized.rows * 0.8;
-            int x = (resized.cols - cropW) / 2;
-            int y = (resized.rows - cropH) / 2;
-            Mat cropped = resized(Rect(x, y, cropW, cropH));
-
-            flip(cropped, out[i], 1);
+            // Mirror horizontally
+            flip(resized, out[i], 1);
         }
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "crop=80%,resize=224x224,mirror";
     printResult("OpenCV ResizeCropMirror", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_OpenCV_ChannelDropout(const vector<Mat>& imgs, bool isColor, float dropoutProb) {

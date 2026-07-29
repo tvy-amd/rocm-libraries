@@ -2666,30 +2666,32 @@ void benchmark_RPP_HOST_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, 
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
     vector<RpptDesc> dstDescs(num_images);
-    vector<RpptROI> srcRois(num_images);
     vector<RpptROI> dstRois(num_images);
     vector<RpptImagePatch> dstImgSizes(num_images);
     vector<Rpp32u> mirror(num_images, 1);  // Horizontal flip
 
+    // Target parameters (same as all other versions)
+    int targetWidth = 224;
+    int targetHeight = 224;
+
+    // Calculate crop parameters once (all images have same dimensions)
+    int cropWidth = (imgs[0].cols * 4) / 5;
+    int cropHeight = (imgs[0].rows * 4) / 5;
+    int cropX = (imgs[0].cols - cropWidth) / 2;
+    int cropY = (imgs[0].rows - cropHeight) / 2;
+
     for (int i = 0; i < num_images; ++i) {
-        int h = imgs[i].rows;
-        int w = imgs[i].cols;
+        // Resize to target size
+        dstImgSizes[i].width = targetWidth;
+        dstImgSizes[i].height = targetHeight;
 
-        // Source ROI (crop from center before resize)
-        srcRois[i].xywhROI.xy.x = 10;
-        srcRois[i].xywhROI.xy.y = 10;
-        srcRois[i].xywhROI.roiWidth = w - 20;
-        srcRois[i].xywhROI.roiHeight = h - 20;
+        // ROI defines source crop region
+        dstRois[i].xywhROI.xy.x = cropX;
+        dstRois[i].xywhROI.xy.y = cropY;
+        dstRois[i].xywhROI.roiWidth = cropWidth;
+        dstRois[i].xywhROI.roiHeight = cropHeight;
 
-        // Resize to half of source ROI
-        dstImgSizes[i].width = (w - 20) / 2;
-        dstImgSizes[i].height = (h - 20) / 2;
-
-        // Final crop size
-        dstRois[i].xywhROI.roiWidth = 50;
-        dstRois[i].xywhROI.roiHeight = 50;
-
-        out[i] = Mat::zeros(50, 50, imgs[i].type());
+        out[i] = Mat::zeros(targetHeight, targetWidth, imgs[i].type());
         srcDescs[i] = createRppDescriptor(imgs[i], isColor ? RpptLayout::NHWC : RpptLayout::NCHW);
         dstDescs[i] = createRppDescriptor(out[i], isColor ? RpptLayout::NHWC : RpptLayout::NCHW);
     }
@@ -2705,8 +2707,10 @@ void benchmark_RPP_HOST_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, 
         }
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "crop=80%,resize=224x224,mirror";
     printResult("RPP HOST ResizeCropMirror", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "resize+crop+flip");
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_RICAP(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -7651,8 +7655,15 @@ void benchmark_RPP_HOST_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool i
     int height = imgs[0].rows;
     int width = imgs[0].cols;
 
-    // Final output size after resize and crop
-    int finalSize = 50;
+    // Target parameters (same as all other versions)
+    int targetWidth = 224;
+    int targetHeight = 224;
+
+    // Calculate center 80% crop region
+    int cropWidth = (width * 4) / 5;
+    int cropHeight = (height * 4) / 5;
+    int cropX = (width - cropWidth) / 2;
+    int cropY = (height - cropHeight) / 2;
 
     // Set up descriptors
     RpptDesc srcDesc, dstDesc;
@@ -7661,9 +7672,9 @@ void benchmark_RPP_HOST_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool i
     dstDesc.layout = isColor ? RpptLayout::NHWC : RpptLayout::NCHW;
     dstDesc.dataType = RpptDataType::U8;
     int widthPadded = ((width / 8) * 8) + 8;
-    int dstWidthPadded = ((finalSize / 8) * 8) + 8;
+    int dstWidthPadded = ((targetWidth / 8) * 8) + 8;
     set_descriptor_dims_and_strides(&srcDesc, batchSize, height, widthPadded, channels, 0);
-    set_descriptor_dims_and_strides(&dstDesc, batchSize, finalSize, dstWidthPadded, channels, 0);
+    set_descriptor_dims_and_strides(&dstDesc, batchSize, targetHeight, dstWidthPadded, channels, 0);
 
     // Allocate buffers
     size_t srcBufferSize = (size_t)srcDesc.n * srcDesc.h * srcDesc.w * srcDesc.c;
@@ -7683,8 +7694,8 @@ void benchmark_RPP_HOST_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool i
     // Resize target size
     RpptImagePatch* dstImgSizes = (RpptImagePatch*)calloc(batchSize, sizeof(RpptImagePatch));
     for (int i = 0; i < batchSize; i++) {
-        dstImgSizes[i].width = (width - 20) / 2;
-        dstImgSizes[i].height = (height - 20) / 2;
+        dstImgSizes[i].width = targetWidth;
+        dstImgSizes[i].height = targetHeight;
     }
 
     // Mirror flag
@@ -7693,11 +7704,13 @@ void benchmark_RPP_HOST_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool i
         mirrorTensor[i] = 1;  // Horizontal flip
     }
 
-    // Setup ROIs
+    // Setup ROIs - defines center 80% crop from source
     RpptROI* dstRoiTensor = (RpptROI*)calloc(batchSize, sizeof(RpptROI));
     for (int i = 0; i < batchSize; i++) {
-        dstRoiTensor[i].xywhROI.roiWidth = finalSize;
-        dstRoiTensor[i].xywhROI.roiHeight = finalSize;
+        dstRoiTensor[i].xywhROI.xy.x = cropX;
+        dstRoiTensor[i].xywhROI.xy.y = cropY;
+        dstRoiTensor[i].xywhROI.roiWidth = cropWidth;
+        dstRoiTensor[i].xywhROI.roiHeight = cropHeight;
     }
 
     // Benchmark loop
@@ -7712,8 +7725,10 @@ void benchmark_RPP_HOST_ResizeCropMirror_Batched(const vector<Mat>& imgs, bool i
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "crop=80%,resize=224x224,mirror";
     printResult("RPP HOST BATCH ResizeCropMirror", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "resize+crop+flip");
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input);
     free(output);
