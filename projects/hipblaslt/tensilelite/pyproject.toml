@@ -60,7 +60,7 @@ show_contexts = true
 
 [tool.pytest.ini_options]
 # You can also move pytest config here if desired
-testpaths = ["Tensile/Tests", "rocisa/test"]
+testpaths = ["tensilelite/Tests", "rocisa/test"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -90,12 +90,12 @@ dependencies = [
 ]
 
 [project.scripts]
-Tensile = "Tensile.Tensile:main"
-TensileCreateLibrary = "Tensile.TensileCreateLibrary:run"
-TensileVerifyStinkyElfText = "Tensile.verify_stinky_comment_vs_elf_text:main"
-TensileGetPath = "Tensile:PrintTensileRoot"
-TensileBenchmarkCluster = "Tensile.TensileBenchmarkCluster:main"
-TensileRetuneLibrary = "Tensile.TensileRetuneLibrary:main"
+Tensile = "tensilelite.Tensile:main"
+TensileCreateLibrary = "tensilelite.TensileCreateLibrary:run"
+TensileVerifyStinkyElfText = "tensilelite.verify_stinky_comment_vs_elf_text:main"
+TensileGetPath = "tensilelite:PrintTensileRoot"
+TensileBenchmarkCluster = "tensilelite.TensileBenchmarkCluster:main"
+TensileRetuneLibrary = "tensilelite.TensileRetuneLibrary:main"
 
 [dependency-groups]
 dev = [
@@ -114,10 +114,10 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["Tensile*"]
+include = ["tensilelite*"]
 
 [tool.setuptools.package-data]
-Tensile = ["cmake/*"]
+tensilelite = ["cmake/*"]
 
 [tool.uv]
 # Use the user's existing interpreter; never download a uv-managed Python.
@@ -135,36 +135,36 @@ members = ["rocisa"]
 
 # Mutation testing (mutmut 3.x) — slice-1 pilot.
 # See the Mutation testing section of
-# Tensile/Tests/unit/characterization/README.md (full plan archived in the
+# tensilelite/Tests/unit/characterization/README.md (full plan archived in the
 # internal TensileLiteQualityTools repo, evidence-archive/).
 # mutmut 3.x copies `source_paths` into a `mutants/` dir and runs the selected
 # tests there, so the WHOLE Tensile package is copied (for imports to resolve)
 # while `only_mutate` restricts which files are actually mutated to the slice.
 # `also_copy` must include pytest.ini (markers + config; not auto-copied).
 [tool.mutmut]
-source_paths = ["Tensile"]
+source_paths = ["tensilelite"]
 only_mutate = [
-    "Tensile/Common/DataType.py",
-    "Tensile/Common/Utilities.py",
-    "Tensile/Common/Types.py",
-    "Tensile/Common/ValidParameters.py",
-    "Tensile/TensileLogic/ValidChipId.py",
-    "Tensile/TensileLogic/ValidMatrixInstruction.py",
-    "Tensile/TensileLogic/ValidWorkGroup.py",
-    "Tensile/TensileLogic/ValidWorkGroupMappingXCC.py",
+    "tensilelite/Common/DataType.py",
+    "tensilelite/Common/Utilities.py",
+    "tensilelite/Common/Types.py",
+    "tensilelite/Common/ValidParameters.py",
+    "tensilelite/TensileLogic/ValidChipId.py",
+    "tensilelite/TensileLogic/ValidMatrixInstruction.py",
+    "tensilelite/TensileLogic/ValidWorkGroup.py",
+    "tensilelite/TensileLogic/ValidWorkGroupMappingXCC.py",
 ]
 do_not_mutate = [
-    "Tensile/Tests/*",
+    "tensilelite/Tests/*",
     "*/Tests/*",
     "*/test_*.py",
     "*/conftest.py",
 ]
 pytest_add_cli_args_test_selection = [
-    "Tensile/Tests/unit/characterization/CommonTypes",
-    "Tensile/Tests/unit/characterization/CommonUtilities",
-    "Tensile/Tests/unit/characterization/DataType",
-    "Tensile/Tests/unit/characterization/TensileLogic",
-    "Tensile/Tests/unit/characterization/ValidParameters"
+    "tensilelite/Tests/unit/characterization/CommonTypes",
+    "tensilelite/Tests/unit/characterization/CommonUtilities",
+    "tensilelite/Tests/unit/characterization/DataType",
+    "tensilelite/Tests/unit/characterization/TensileLogic",
+    "tensilelite/Tests/unit/characterization/ValidParameters"
 ]
 also_copy = ["pytest.ini"]
 # mutate_only_covered_lines MUST stay false here: when true, mutmut runs an
