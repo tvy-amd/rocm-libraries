@@ -31,7 +31,6 @@ from typing import List, Dict, Literal, Tuple
 
 from Tensile.AsmStoreState import VectorDataTypes
 from Tensile.Activation import ActivationType
-from Tensile.Activation import ActivationType
 from Tensile.AsmStoreState import VectorDataTypes
 from Tensile.Common import assignParameterWithDefault, IsaInfo, \
                     print2, printExit, printWarning, \
@@ -39,6 +38,7 @@ from Tensile.Common import assignParameterWithDefault, IsaInfo, \
                     roundUpToNearestMultiple, effectiveMatrixInstMN
 from Tensile.Common.DataType import DataType
 from Tensile.Common.TypeValidationErrors import ConfigTypeError
+from Tensile.CustomKernels import supportsUserSgprKernargPreload
 from Tensile.SolutionStructs.LdsPadding import get_fp4_mt_config, get_fp8_mt_config, get_mxs_mt_config, \
                                                get_fp16_mt_config, get_fp32_mt_config
 from Tensile.Common.GlobalParameters import defaultSolution, \
@@ -1262,8 +1262,6 @@ class Solution(collections.abc.Mapping):
       state["LSP%s"%tc] = state["NumThreads"] // state["WavefrontSize"]
 
     return True
-
-
 
 
   ##############################################
@@ -5676,8 +5674,6 @@ class Solution(collections.abc.Mapping):
         #reject(state, printRejectionReason, "PBC with wide load has insufficient overlap guarantees- try GRVW=1 or adding appropriate Assert*ElementMultiple")
 
 
-
-
     if state["EnableMatrixInstruction"]:
       cont1 = not state["GuaranteeNoPartialB"]
       cont2 = ((state["MatrixInstN"] % state["GlobalReadVectorWidthB"]) != 0)
@@ -5818,7 +5814,7 @@ class Solution(collections.abc.Mapping):
     #Need to force disabling PreloadKernArgs if compiler does not support
     #Can not just reject the solution since the user library may find any solutions
     if state["PreloadKernArgs"]:
-      if ((rocmVersion.major < 6 or (rocmVersion.major == 6 and rocmVersion.patch < 32650)) or \
+      if (not supportsUserSgprKernargPreload(rocmVersion) or \
           not (isa == (9, 0, 10) or isa[:2] == (9, 4) or isa == (9, 5, 0) or isa == (12, 5, 0))):
         #print("Force to Disable PreloadKernArgs since this hipcc version doesn't support",)
         state["PreloadKernArgs"] = False
