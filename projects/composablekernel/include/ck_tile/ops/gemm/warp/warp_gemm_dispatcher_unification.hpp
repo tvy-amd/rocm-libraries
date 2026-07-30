@@ -155,7 +155,11 @@ struct UnificationDispatcher
     static constexpr bool HasUnambiguousMxType =
         is_any_of<AType, pk_fp4_t, pk_fp6x16_t, pk_bf6x16_t>::value ||
         is_any_of<BType, pk_fp4_t, pk_fp6x16_t, pk_bf6x16_t>::value;
-    static constexpr bool IsMx = UseMxScale || HasUnambiguousMxType;
+    // TODO: is this a good workaround?
+    static constexpr bool HasUnambiguousMNK =
+        (MPerWave == 16 && NPerWave == 16 && KPerWave == 128) ||
+        (MPerWave == 32 && NPerWave == 32 && KPerWave == 64);
+    static constexpr bool IsMx = UseMxScale || HasUnambiguousMxType || HasUnambiguousMNK;
 
     static_assert(!IsMx || std::is_same_v<AccType, float>,
                   "MX (block-scaled) MFMA requires a float accumulator");
