@@ -62,18 +62,25 @@ option(HIPBLASLT_ENABLE_MATRIX_TRANSFORM "Build hipBLASLt MatrixTransform device
 option(HIPBLASLT_ENABLE_CLIENT "Build hipBLASLt client apps." ON)
 option(HIPBLASLT_ENABLE_HOST "Build hipBLASLt host library." ON)
 option(HIPBLASLT_ENABLE_FETCH "Fetch dependencies using fetch content" OFF)
-option(HIPBLASLT_BUNDLE_PYTHON_DEPS "Build python dependencies requied for device code generation." ON)
+option(HIPBLASLT_BUNDLE_PYTHON_DEPS "Build the in-tree rocisa Python extension." OFF)
 option(HIPBLASLT_ENABLE_COVERAGE "Build coverage support." OFF)
 option(HIPBLASLT_ENABLE_THEROCK "Build hipBLASLt for TheRock." OFF)
 option(HIPBLASLT_VALIDATE_INSTALL "Run post-install per-base layout / .dat integrity checks on the install tree." OFF)
 
 option(TENSILELITE_ENABLE_HOST "Build the tensilelite host library." ON)
 option(TENSILELITE_BUILD_TESTING "Build client when building tests" OFF)
-option(TENSILELITE_ENABLE_CLIENT "Build tensilelite client" ${TENSILELITE_BUILD_TESTING})
+option(TENSILELITE_ENABLE_CLIENT "Build tensilelite client" ${HIPBLASLT_ENABLE_DEVICE})
 option(HIPBLASLT_INSTALL_TENSILELITE_TEST_ARTIFACTS
        "Install TensileLite Python packages and test tools into the test artifact tree."
        OFF)
-option(TENSILELITE_ENABLE_AUTOBUILD "Generate scripts for wrapping tensile python scripts" OFF)
+set(HIPBLASLT_TENSILELITE_PYTHON_MODE "BUILD" CACHE STRING
+    "TensileLite Python environment: BUILD (staged local artifacts) or SYSTEM")
+set_property(CACHE HIPBLASLT_TENSILELITE_PYTHON_MODE PROPERTY STRINGS BUILD SYSTEM)
+if(NOT HIPBLASLT_TENSILELITE_PYTHON_MODE STREQUAL "BUILD"
+        AND NOT HIPBLASLT_TENSILELITE_PYTHON_MODE STREQUAL "SYSTEM")
+    message(FATAL_ERROR
+        "HIPBLASLT_TENSILELITE_PYTHON_MODE must be BUILD or SYSTEM")
+endif()
 
 if(HIPBLASLT_ENABLE_CLIENT)
     option(HIPBLASLT_BUILD_TESTING "Build hipblaslt client tests." ON)
@@ -211,15 +218,14 @@ if(HIPBLASLT_ENABLE_DEVICE AND NOT WIN32)
     endif()
 endif()
 
-if(HIPBLASLT_BUNDLE_PYTHON_DEPS)
-    set(HIPBLASLT_PYTHON_DEPS "_rocisa")
-    set(hipblaslt_python_dev Development.Module)
-    hipblaslt_find_python("${hipblaslt_python_dev}")
-    hipblaslt_configure_bundled_python_command("${CMAKE_CURRENT_BINARY_DIR}/tensilelite/rocisa;${CMAKE_CURRENT_BINARY_DIR}/tensilelite" "${san_opts}")
+if(HIPBLASLT_ENABLE_DEVICE OR TENSILELITE_ENABLE_CLIENT
+        OR HIPBLASLT_BUNDLE_PYTHON_DEPS)
+    hipblaslt_find_python(3.10 "Development.Module")
 else()
-    hipblaslt_find_python("${hipblaslt_python_dev}")
-    set(HIPBLASLT_PYTHON_COMMAND "${Python_EXECUTABLE}")
+    hipblaslt_find_python(3.8 "")
 endif()
+set(HIPBLASLT_PYTHON_COMMAND "${Python3_EXECUTABLE}")
+set(HIPBLASLT_PYTHON_DEPS "")
 
 if(HIPBLASLT_ENABLE_ROCROLLER)
     if(NOT ROCM_LIBS_SUPERBUILD)
@@ -338,6 +344,8 @@ if(_hipblaslt_mxdatagen_enabled)
 endif()
 
 add_subdirectory(tensilelite)
+hipblaslt_configure_tensilelite_python(
+    "${HIPBLASLT_TENSILELITE_PYTHON_MODE}" "${san_opts}")
 
 if(HIPBLASLT_ENABLE_HOST)
     if(HIPBLASLT_BUILD_SHARED_LIBS)
