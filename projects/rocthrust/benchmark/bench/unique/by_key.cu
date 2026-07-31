@@ -44,7 +44,7 @@ inline bool is_valid(const size_t size, const size_t maxi)
     thrust::device_vector<T> out_vals(size);
     return true;
   }
-  catch (const ::thrust::system::detail::bad_alloc& e)
+  catch (const THRUST_NS_QUALIFIER::system::detail::bad_alloc& e)
   {
     return false;
   }
