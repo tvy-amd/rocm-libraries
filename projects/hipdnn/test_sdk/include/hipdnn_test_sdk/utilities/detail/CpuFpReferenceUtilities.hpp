@@ -193,7 +193,7 @@ struct ParallelTensorFunctorDynamic
         {
             return;
         }
-        numThreads = std::max<std::size_t>(1, numThreads);
+        numThreads = std::min(totalElements, std::max<std::size_t>(1, numThreads));
 
         const std::size_t workPerThread = (totalElements + numThreads - 1) / numThreads;
 
