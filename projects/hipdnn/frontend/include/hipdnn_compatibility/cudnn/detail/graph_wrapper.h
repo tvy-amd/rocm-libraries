@@ -206,8 +206,11 @@ public:
 
     int64_t get_execution_plan_count() const
     {
-        return hasOperationGraphState() ? _graph.get_execution_plan_count()
-                                        : (stageAtLeast(Stage::PlansCreated) ? 1 : 0);
+        if(hasOperationGraphState())
+        {
+            return _graph.get_execution_plan_count();
+        }
+        return stageAtLeast(Stage::PlansCreated) ? 1 : 0;
     }
 
     error_t get_engine_count(int64_t& count)
@@ -1145,6 +1148,7 @@ public:
         return _graph.autotune(handle, tensorMap, workspace, userImpl);
     }
 
+    // NOLINTNEXTLINE(readability-make-member-function-const)
     error_t warmup(cudnnHandle_t handle,
                    std::unordered_map<int64_t, void*>& tensorUidToPointerMap,
                    void* workspace)
@@ -1152,6 +1156,7 @@ public:
         return execute_plan_at_index(handle, tensorUidToPointerMap, workspace, 0);
     }
 
+    // NOLINTNEXTLINE(readability-make-member-function-const)
     error_t warmup(cudnnHandle_t handle,
                    std::unordered_map<std::shared_ptr<Tensor_attributes>, void*>& tensorMap,
                    void* workspace)
@@ -1159,6 +1164,7 @@ public:
         return execute_plan_at_index(handle, tensorMap, workspace, 0);
     }
 
+    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     error_t populate_cuda_graph(cudnnHandle_t handle,
                                 std::unordered_map<int64_t, void*>& tensorUidToPointerMap,
                                 void* workspace,
@@ -1172,6 +1178,7 @@ public:
                 "populate_cuda_graph is unsupported by this shim"};
     }
 
+    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     error_t populate_cuda_graph(
         cudnnHandle_t handle,
         std::unordered_map<std::shared_ptr<Tensor_attributes>, void*>& tensorMap,
@@ -1186,6 +1193,7 @@ public:
                 "populate_cuda_graph is unsupported by this shim"};
     }
 
+    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     error_t update_cuda_graph(cudnnHandle_t handle,
                               std::unordered_map<int64_t, void*>& tensorUidToPointerMap,
                               void* workspace,
@@ -1198,6 +1206,7 @@ public:
         return {error_code_t::GRAPH_NOT_SUPPORTED, "update_cuda_graph is unsupported by this shim"};
     }
 
+    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     error_t
         update_cuda_graph(cudnnHandle_t handle,
                           std::unordered_map<std::shared_ptr<Tensor_attributes>, void*>& tensorMap,
