@@ -75,6 +75,17 @@ struct TileDistrEncCalc
         tuple<sequence<1, 0, 0>>,
         sequence<2, 2>,
         sequence<0, 2>>;
+    // Encoding without trivial dims (== 1)
+    template <index_t MajorDimSize, index_t CompressionRatio = 1>
+    using ABWarpDstrEncStridedKLegacy2 =
+        tile_distribution_encoding<sequence<>,
+                                   tuple<sequence<MajorDimSize>,
+                                         sequence<MmaOp::kK / MmaOp::kABKPerLane,
+                                                  MmaOp::kABKPerLane / CompressionRatio * kIter>>,
+                                   tuple<sequence<2, 1>>,
+                                   tuple<sequence<0, 0>>,
+                                   sequence<2>,
+                                   sequence<1>>;
 
     // Encoding with Ps2RHssMinor = <0, 0, 0> layout. Lane reads contiguous K values, i.e. K =
     // {kABKLane, NumAccess, VecPerAccess}
@@ -132,7 +143,10 @@ struct TileDistrEncCalc
         std::conditional_t<
             (kUseLegacyStridedK && Repeat == 1 && NumAccess == 1 && CompressionRatio == 1),
             ABWarpDstrEncStridedKLegacy<MajorDimSize, Repeat, NumAccess, CompressionRatio>,
-            ABWarpDstrEncStridedK<MajorDimSize, Repeat, NumAccess, CompressionRatio>>>;
+            std::conditional_t<
+                Repeat == 1 && NumAccess == 1,
+                ABWarpDstrEncStridedKLegacy2<MajorDimSize, CompressionRatio>,
+                ABWarpDstrEncStridedK<MajorDimSize, Repeat, NumAccess, CompressionRatio>>>>;
 
     // Special A Warp distribution encoding just for swizzle case. This was split out since it
     // specifically deals with the M dimension which would make not sense for B.
