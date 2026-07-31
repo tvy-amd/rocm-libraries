@@ -198,7 +198,7 @@ namespace
         }
 
         hipStream_t stream = nullptr;
-        hipStreamCreate(&stream);
+        hipError_t  hipErr = hipStreamCreate(&stream);
 
         // fp16 device buffers; GEMM output correctness is not verified.
         const size_t elemBytes = sizeof(uint16_t);
@@ -208,11 +208,11 @@ namespace
            || hipMalloc(&d_c, static_cast<size_t>(kM * kN) * elemBytes) != hipSuccess
            || hipMalloc(&d_ws, static_cast<size_t>(kWsBytes)) != hipSuccess)
         {
-            hipFree(d_a);
-            hipFree(d_b);
-            hipFree(d_c);
-            hipFree(d_ws);
-            hipStreamDestroy(stream);
+            hipErr = hipFree(d_a);
+            hipErr = hipFree(d_b);
+            hipErr = hipFree(d_c);
+            hipErr = hipFree(d_ws);
+            hipErr = hipStreamDestroy(stream);
             hipblasLtDestroy(handle);
             cleanup();
             ADD_FAILURE() << "hipMalloc failed (insufficient device memory?)";
@@ -271,7 +271,7 @@ namespace
                             d_ws,
                             result.workspaceSize,
                             stream);
-            hipStreamSynchronize(stream);
+            hipErr = hipStreamSynchronize(stream);
         }
 
         // Teardown — order mirrors creation.
@@ -280,11 +280,11 @@ namespace
         hipblasLtMatrixLayoutDestroy(matC);
         hipblasLtMatrixLayoutDestroy(matB);
         hipblasLtMatrixLayoutDestroy(matA);
-        hipFree(d_ws);
-        hipFree(d_c);
-        hipFree(d_b);
-        hipFree(d_a);
-        hipStreamDestroy(stream);
+        hipErr = hipFree(d_ws);
+        hipErr = hipFree(d_c);
+        hipErr = hipFree(d_b);
+        hipErr = hipFree(d_a);
+        hipErr = hipStreamDestroy(stream);
         hipblasLtDestroy(handle);
 
         cleanup();
