@@ -14,7 +14,7 @@ Swept dimensions:
   tile_k         : 16, 32, 64, 128
   warp_m, warp_n : 1, 2, 4, 8
   warp_tile_m == warp_tile_n : 16, 32
-  pipeline       : mem, compv3, compv4
+  pipeline       : mem, compv3, compv4, mem_db, async_dma
   epilogue       : default, cshuffle
 
 warp_tile_k is chosen as the largest valid K for the target MFMA atom
@@ -58,7 +58,7 @@ _TILE_K = (16, 32, 64, 128)
 _WARP_MN = (1, 2, 4, 8)
 _WARP_MN_GFX1250 = (1, 2, 4, 8, 16)
 _WARP_TILE_MN = (16, 32)
-_PIPELINES = ("mem", "compv3", "compv4")
+_PIPELINES = ("wavelet",)# "mem", "compv3", "compv4", "mem_db", "async_dma")
 _EPILOGUES = ("default", "cshuffle")
 # Split-K degrees swept when --split-k 0 (auto) is passed for wgrad.
 _SPLIT_K_AUTO = (1, 2, 4, 8, 16, 32, 64, 128)
