@@ -80,6 +80,9 @@ function(hipblaslt_create_device_library)
         list(APPEND _opts_list "--disable-asm-comments")
     endif()
 
+    # Keep the resource as an explicit dependency so quarantine edits invalidate
+    # the validation stamp; TensileLogic itself resolves the resource at runtime.
+    set(_known_bugs_resource "${_codegen_dir}/Tensile/TensileLogic/known_bugs.yaml")
     set(_logic_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_cdl_TARGET}-TensileLogic.stamp")
     add_custom_command(
         OUTPUT "${_logic_stamp}"
@@ -87,9 +90,10 @@ function(hipblaslt_create_device_library)
         COMMAND ${HIPBLASLT_PYTHON_COMMAND}
             "${_codegen_dir}/Tensile/bin/TensileLogic"
             "${_cdl_LOGIC_PATH}"
+            --use-bundled-known-bugs
             --check-all
         COMMAND ${CMAKE_COMMAND} -E touch "${_logic_stamp}"
-        DEPENDS ${HIPBLASLT_PYTHON_DEPS}
+        DEPENDS ${HIPBLASLT_PYTHON_DEPS} "${_known_bugs_resource}"
         VERBATIM
         USES_TERMINAL
     )
