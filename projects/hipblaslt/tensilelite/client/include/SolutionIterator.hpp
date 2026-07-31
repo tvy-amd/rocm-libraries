@@ -176,6 +176,12 @@ namespace TensileLite
             double m_predictionThreshold;
             double m_currentPrediction;
 
+            // Whether the prediction-filtered queue is populated for the current
+            // problem. Every branch that consumes m_qSolutionIdx must test this
+            // rather than m_predictionThreshold alone: prediction is also
+            // unavailable on architectures Formocast cannot model.
+            bool m_usePrediction = false;
+
             int m_firstSolutionIdx;
             int m_lastSolutionIdx;
 
@@ -236,6 +242,9 @@ namespace TensileLite
             int                                               m_currentSolutionIdx = 0;
             double                                            m_predictionThreshold;
             double                                            m_currentPrediction;
+
+            // See AllSolutionsIterator::m_usePrediction.
+            bool m_usePrediction = false;
         };
     } // namespace Client
 } // namespace TensileLite
