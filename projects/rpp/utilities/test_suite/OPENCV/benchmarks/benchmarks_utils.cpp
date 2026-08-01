@@ -265,6 +265,77 @@ string getOSInfo() {
     return "Unknown OS";
 }
 
+// Helper to get GPU architecture with family name
+string getGPUArchitecture() {
+    int deviceCount = 0;
+    if (hipGetDeviceCount(&deviceCount) != hipSuccess) {
+        return "GPU detection failed";
+    }
+    if (deviceCount > 0) {
+        hipDeviceProp_t prop;
+        if (hipGetDeviceProperties(&prop, 0) != hipSuccess) {
+            return "Failed to get GPU properties";
+        }
+        string gcnArchName(prop.gcnArchName);
+        if (gcnArchName.empty()) {
+            return "Unknown";
+        }
+
+        ostringstream oss;
+
+        // Determine architecture family and version
+        if (gcnArchName.find("gfx12") == 0) {
+            oss << "RDNA3 (" << gcnArchName << ")";
+        } else if (gcnArchName.find("gfx11") == 0) {
+            oss << "RDNA3 (" << gcnArchName << ")";
+        } else if (gcnArchName.find("gfx103") == 0) {
+            oss << "RDNA2 (" << gcnArchName << ")";
+        } else if (gcnArchName.find("gfx101") == 0) {
+            oss << "RDNA1 (" << gcnArchName << ")";
+        } else if (gcnArchName == "gfx940" || gcnArchName == "gfx941" || gcnArchName == "gfx942") {
+            oss << "CDNA3 (" << gcnArchName << ")";
+        } else if (gcnArchName == "gfx90a") {
+            oss << "CDNA2 (" << gcnArchName << ")";
+        } else if (gcnArchName == "gfx908") {
+            oss << "CDNA1 (" << gcnArchName << ")";
+        } else if (gcnArchName.find("gfx9") == 0) {
+            oss << "GCN5 (" << gcnArchName << ")";
+        } else if (gcnArchName.find("gfx8") == 0) {
+            oss << "GCN4 (" << gcnArchName << ")";
+        } else if (gcnArchName.find("gfx7") == 0) {
+            oss << "GCN3 (" << gcnArchName << ")";
+        } else if (gcnArchName.find("gfx6") == 0) {
+            oss << "GCN2 (" << gcnArchName << ")";
+        } else {
+            // Unknown architecture, just return the gcnArchName
+            oss << gcnArchName;
+        }
+
+        return oss.str();
+    }
+    return "No GPU detected";
+}
+
+// Helper to get GPU memory information (in GB)
+string getGPUMemoryInfo() {
+    int deviceCount = 0;
+    if (hipGetDeviceCount(&deviceCount) != hipSuccess) {
+        return "GPU detection failed";
+    }
+    if (deviceCount > 0) {
+        hipDeviceProp_t prop;
+        if (hipGetDeviceProperties(&prop, 0) != hipSuccess) {
+            return "Failed to get GPU properties";
+        }
+        double memGB = prop.totalGlobalMem / (1024.0 * 1024.0 * 1024.0);
+        ostringstream oss;
+        oss.precision(2);
+        oss << fixed << memGB << " GB";
+        return oss.str();
+    }
+    return "No GPU detected";
+}
+
 // Helper to get GPU info
 string getGPUInfo() {
     int deviceCount = 0;
@@ -276,7 +347,36 @@ string getGPUInfo() {
         if (hipGetDeviceProperties(&prop, 0) != hipSuccess) {
             return "Failed to get GPU properties";
         }
-        return string(prop.name);
+        ostringstream oss;
+        oss << prop.name;
+
+        // Determine compute units based on architecture
+        // RDNA architectures (gfx10xx, gfx11xx, gfx12xx) report WGPs in multiProcessorCount
+        // Each WGP contains 2 CUs, so we need to multiply by 2
+        // GCN and CDNA architectures report CUs directly
+        int computeUnits = prop.multiProcessorCount;
+        string gcnArchName(prop.gcnArchName);
+
+        // Check architecture using both gcnArchName string and major version number
+        bool isRDNA = false;
+        if (!gcnArchName.empty()) {
+            // RDNA1: gfx10xx (major=10)
+            // RDNA2: gfx10xx (major=10, specifically gfx1030+)
+            // RDNA3: gfx11xx (major=11) and gfx12xx (major=12)
+            isRDNA = (gcnArchName.find("gfx10") == 0 ||
+                      gcnArchName.find("gfx11") == 0 ||
+                      gcnArchName.find("gfx12") == 0);
+        } else {
+            // Fallback to major version if gcnArchName is not available
+            isRDNA = (prop.major >= 10 && prop.major <= 12);
+        }
+
+        if (isRDNA) {
+            computeUnits *= 2;  // Convert WGPs to CUs for RDNA architectures
+        }
+
+        oss << " (" << computeUnits << " CUs)";
+        return oss.str();
     }
     return "No GPU detected";
 }
@@ -528,7 +628,7 @@ void init_cutout_dropout(int batchSize, int maxBoxesPerImage, Rpp32u* numOfBoxes
 
 // ==================== RPP COLOR AUGMENTATIONS ====================
 bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& grayResults,
-                         const vector<BenchmarkResult>& colorResults) {
+                         const vector<BenchmarkResult>& colorResults, int maxAvailableThreads) {
     lxw_workbook* workbook = workbook_new(filename.c_str());
     if (!workbook) {
         cerr << "Error: Failed to create Excel workbook: " << filename << endl;
@@ -581,20 +681,20 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_write_string(info_sheet, row, 0, "CPU", info_label_format);
     worksheet_write_string(info_sheet, row++, 1, getCPUInfo().c_str(), NULL);
 
-    worksheet_write_string(info_sheet, row, 0, "Memory", info_label_format);
+    worksheet_write_string(info_sheet, row, 0, "Maximum Available Threads", info_label_format);
+    worksheet_write_number(info_sheet, row++, 1, omp_get_max_threads(), NULL);
+
+    worksheet_write_string(info_sheet, row, 0, "System RAM", info_label_format);
     worksheet_write_string(info_sheet, row++, 1, getMemoryInfo().c_str(), NULL);
 
     worksheet_write_string(info_sheet, row, 0, "GPU", info_label_format);
     worksheet_write_string(info_sheet, row++, 1, getGPUInfo().c_str(), NULL);
 
-    worksheet_write_string(info_sheet, row, 0, "Maximum Available Threads", info_label_format);
-    worksheet_write_number(info_sheet, row++, 1, omp_get_max_threads(), NULL);
+    worksheet_write_string(info_sheet, row, 0, "GPU Architecture", info_label_format);
+    worksheet_write_string(info_sheet, row++, 1, getGPUArchitecture().c_str(), NULL);
 
-    worksheet_write_string(info_sheet, row, 0, "Number of Threads", info_label_format);
-    worksheet_write_number(info_sheet, row++, 1, NUM_THREADS, NULL);
-
-    worksheet_write_string(info_sheet, row, 0, "Number of Runs", info_label_format);
-    worksheet_write_number(info_sheet, row++, 1, NUM_RUNS, NULL);
+    worksheet_write_string(info_sheet, row, 0, "GPU Memory", info_label_format);
+    worksheet_write_string(info_sheet, row++, 1, getGPUMemoryInfo().c_str(), NULL);
 
     // Sheet 2: Grayscale Results
     lxw_worksheet* gray_sheet = workbook_add_worksheet(workbook, "Grayscale Benchmarks");
@@ -604,7 +704,13 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_set_column(gray_sheet, 2, 2, 15, NULL);
     worksheet_set_column(gray_sheet, 3, 3, 12, NULL);
     worksheet_set_column(gray_sheet, 4, 5, 12, NULL);
-    worksheet_set_column(gray_sheet, 6, 10, 18, NULL);
+    worksheet_set_column(gray_sheet, 6, 10, 22, NULL);
+
+    // Create column headers with thread information
+    ostringstream opencvHeader, rppHostHeader, rppHostBatchHeader;
+    opencvHeader << "OpenCV (avg ms, " << NUM_THREADS << " threads)";
+    rppHostHeader << "RPP HOST (avg ms, " << NUM_THREADS << " threads)";
+    rppHostBatchHeader << "RPP HOST BATCH (avg ms, " << maxAvailableThreads << " threads)";
 
     row = 0;
     worksheet_write_string(gray_sheet, row, 0, "Operation", header_format);
@@ -613,10 +719,10 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_write_string(gray_sheet, row, 3, "DType", header_format);
     worksheet_write_string(gray_sheet, row, 4, "Batch Size", header_format);
     worksheet_write_string(gray_sheet, row, 5, "Runs", header_format);
-    worksheet_write_string(gray_sheet, row, 6, "OpenCV (avg ms)", header_format);
-    worksheet_write_string(gray_sheet, row, 7, "RPP HOST (avg ms)", header_format);
-    worksheet_write_string(gray_sheet, row, 8, "RPP HIP (avg ms)", header_format);
-    worksheet_write_string(gray_sheet, row, 9, "RPP HOST BATCH (avg ms)", header_format);
+    worksheet_write_string(gray_sheet, row, 6, opencvHeader.str().c_str(), header_format);
+    worksheet_write_string(gray_sheet, row, 7, rppHostHeader.str().c_str(), header_format);
+    worksheet_write_string(gray_sheet, row, 8, rppHostBatchHeader.str().c_str(), header_format);
+    worksheet_write_string(gray_sheet, row, 9, "RPP HIP (avg ms)", header_format);
     worksheet_write_string(gray_sheet, row++, 10, "RPP HIP BATCH (avg ms)", header_format);
 
     for (const auto& result : grayResults) {
@@ -628,8 +734,8 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
         worksheet_write_number(gray_sheet, row, 5, result.numRuns, NULL);
         worksheet_write_number(gray_sheet, row, 6, result.opencvTime, time_format);
         worksheet_write_number(gray_sheet, row, 7, result.rppHostTime, time_format);
-        worksheet_write_number(gray_sheet, row, 8, result.rppHipTime, time_format);
-        worksheet_write_number(gray_sheet, row, 9, result.rppHostBatchTime, time_format);
+        worksheet_write_number(gray_sheet, row, 8, result.rppHostBatchTime, time_format);
+        worksheet_write_number(gray_sheet, row, 9, result.rppHipTime, time_format);
         worksheet_write_number(gray_sheet, row, 10, result.rppHipBatchTime, time_format);
         row++;
     }
@@ -642,7 +748,7 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_set_column(rgb_sheet, 2, 2, 15, NULL);
     worksheet_set_column(rgb_sheet, 3, 3, 12, NULL);
     worksheet_set_column(rgb_sheet, 4, 5, 12, NULL);
-    worksheet_set_column(rgb_sheet, 6, 10, 18, NULL);
+    worksheet_set_column(rgb_sheet, 6, 10, 22, NULL);
 
     row = 0;
     worksheet_write_string(rgb_sheet, row, 0, "Operation", header_format);
@@ -651,10 +757,10 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
     worksheet_write_string(rgb_sheet, row, 3, "DType", header_format);
     worksheet_write_string(rgb_sheet, row, 4, "Batch Size", header_format);
     worksheet_write_string(rgb_sheet, row, 5, "Runs", header_format);
-    worksheet_write_string(rgb_sheet, row, 6, "OpenCV (avg ms)", header_format);
-    worksheet_write_string(rgb_sheet, row, 7, "RPP HOST (avg ms)", header_format);
-    worksheet_write_string(rgb_sheet, row, 8, "RPP HIP (avg ms)", header_format);
-    worksheet_write_string(rgb_sheet, row, 9, "RPP HOST BATCH (avg ms)", header_format);
+    worksheet_write_string(rgb_sheet, row, 6, opencvHeader.str().c_str(), header_format);
+    worksheet_write_string(rgb_sheet, row, 7, rppHostHeader.str().c_str(), header_format);
+    worksheet_write_string(rgb_sheet, row, 8, rppHostBatchHeader.str().c_str(), header_format);
+    worksheet_write_string(rgb_sheet, row, 9, "RPP HIP (avg ms)", header_format);
     worksheet_write_string(rgb_sheet, row++, 10, "RPP HIP BATCH (avg ms)", header_format);
 
     for (const auto& result : colorResults) {
@@ -666,8 +772,8 @@ bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& 
         worksheet_write_number(rgb_sheet, row, 5, result.numRuns, NULL);
         worksheet_write_number(rgb_sheet, row, 6, result.opencvTime, time_format);
         worksheet_write_number(rgb_sheet, row, 7, result.rppHostTime, time_format);
-        worksheet_write_number(rgb_sheet, row, 8, result.rppHipTime, time_format);
-        worksheet_write_number(rgb_sheet, row, 9, result.rppHostBatchTime, time_format);
+        worksheet_write_number(rgb_sheet, row, 8, result.rppHostBatchTime, time_format);
+        worksheet_write_number(rgb_sheet, row, 9, result.rppHipTime, time_format);
         worksheet_write_number(rgb_sheet, row, 10, result.rppHipBatchTime, time_format);
         row++;
     }

@@ -127,7 +127,7 @@ string getROCmVersion();
 string getCurrentDateTime();
 string getDtypeString(int cvType);
 bool writeResultsToExcel(const string& filename, const vector<BenchmarkResult>& grayResults,
-                         const vector<BenchmarkResult>& colorResults);
+                         const vector<BenchmarkResult>& colorResults, int maxAvailableThreads);
 
 // RPP utility functions
 RpptDesc createRppDescriptor(const Mat& img, RpptLayout layout = RpptLayout::NHWC);
