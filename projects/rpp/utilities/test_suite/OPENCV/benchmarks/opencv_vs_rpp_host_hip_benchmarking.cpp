@@ -1073,7 +1073,7 @@ int main(int argc, char* argv[]) {
     string excelFilename = excelFilenameStream.str();
 
     cout << "Exporting results to: " << excelFilename << endl;
-    bool exportSuccess = writeResultsToExcel(excelFilename, grayscaleResults, rgbResults);
+    bool exportSuccess = writeResultsToExcel(excelFilename, grayscaleResults, rgbResults, maxAvailableThreads);
     if (!exportSuccess) {
         cerr
             << "\nWarning: Benchmark completed successfully, but failed to export results to Excel."
