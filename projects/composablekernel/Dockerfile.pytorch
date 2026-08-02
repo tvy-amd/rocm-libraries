@@ -1,4 +1,4 @@
-ARG BASE_DOCKER="rocm/pytorch-nightly:latest"
+ARG BASE_DOCKER="rocm/pytorch-nightly:nightly"
 FROM $BASE_DOCKER
 ARG CK_PYTORCH_BRANCH="develop"
 RUN groupadd -g 109 render && \
