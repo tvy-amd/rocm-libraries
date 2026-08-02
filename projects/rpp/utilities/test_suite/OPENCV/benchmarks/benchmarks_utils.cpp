@@ -316,6 +316,25 @@ string getGPUArchitecture() {
     return "No GPU detected";
 }
 
+// Helper to get just the GPU architecture name (e.g., "gfx1201")
+string getGPUArchitectureName() {
+    int deviceCount = 0;
+    if (hipGetDeviceCount(&deviceCount) != hipSuccess) {
+        return "unknown";
+    }
+    if (deviceCount > 0) {
+        hipDeviceProp_t prop;
+        if (hipGetDeviceProperties(&prop, 0) != hipSuccess) {
+            return "unknown";
+        }
+        string gcnArchName(prop.gcnArchName);
+        if (!gcnArchName.empty()) {
+            return gcnArchName;
+        }
+    }
+    return "unknown";
+}
+
 // Helper to get GPU memory information (in GB)
 string getGPUMemoryInfo() {
     int deviceCount = 0;

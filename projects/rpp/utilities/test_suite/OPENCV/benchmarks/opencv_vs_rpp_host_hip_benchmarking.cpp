@@ -1069,7 +1069,7 @@ int main(int argc, char* argv[]) {
 
     // Export results to Excel
     ostringstream excelFilenameStream;
-    excelFilenameStream << "opencv_vs_rpp_benchmark_results_" << NUM_THREADS << "threads.xlsx";
+    excelFilenameStream << "opencv_vs_rpp_benchmark_results_" << getGPUArchitectureName() << ".xlsx";
     string excelFilename = excelFilenameStream.str();
 
     cout << "Exporting results to: " << excelFilename << endl;

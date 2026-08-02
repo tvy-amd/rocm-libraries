@@ -122,6 +122,8 @@ string getCPUInfo();
 string getMemoryInfo();
 string getOSInfo();
 string getGPUInfo();
+string getGPUArchitecture();
+string getGPUArchitectureName();
 string getRPPVersion();
 string getROCmVersion();
 string getCurrentDateTime();
