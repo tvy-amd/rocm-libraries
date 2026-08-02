@@ -6589,7 +6589,7 @@ void benchmark_RPP_HOST_RandomErase_Batched(const vector<Mat>& imgs, bool isColo
     free(roiTensor);
 }
 
-void benchmark_RPP_HOST_CoarseDropout_Batched(const vector<Mat>& imgs, bool isColor, int dropSize,
+void benchmark_RPP_HOST_CoarseDropout_Batched(const vector<Mat>& imgs, bool isColor, Rpp32u maxBoxesPerImage,
                                              rppHandle_t handle) {
     int batchSize = (int)imgs.size();
     if (batchSize == 0) return;
@@ -6612,36 +6612,47 @@ void benchmark_RPP_HOST_CoarseDropout_Batched(const vector<Mat>& imgs, bool isCo
     Rpp8u *input = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
     Rpp8u *output = static_cast<Rpp8u*>(calloc(ioBufferSize, sizeof(Rpp8u)));
 
-    Rpp32u maxBoxesPerImage = 8;
     RpptRoiLtrb *anchorBoxInfoTensor = static_cast<RpptRoiLtrb*>(calloc(batchSize * maxBoxesPerImage, sizeof(RpptRoiLtrb)));
     Rpp32u *numBoxesTensor = static_cast<Rpp32u*>(calloc(batchSize, sizeof(Rpp32u)));
     RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
 
-    // Initialize dropout boxes - random locations with dropSize dimensions
+    // Initialize dropout boxes - same logic as single-image implementation
     srand(DROPOUT_FIXED_SEED);
     for (int i = 0; i < batchSize; i++) {
-        // Randomly determine number of boxes per image (1 to maxBoxesPerImage)
-        numBoxesTensor[i] = 1 + (rand() % maxBoxesPerImage);
+        int h = imgs[i].rows;
+        int w = imgs[i].cols;
+
+        // Random number of boxes (2 to maxBoxesPerImage) - matches single-image implementation
+        Rpp32u numBoxes = 2 + (rand() % (maxBoxesPerImage - 1));
+        numBoxesTensor[i] = numBoxes;
 
         roiTensor[i].xywhROI.xy.x = 0;
         roiTensor[i].xywhROI.xy.y = 0;
         roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
         roiTensor[i].xywhROI.roiHeight = imgs[i].rows;
 
-        for (Rpp32u j = 0; j < numBoxesTensor[i]; j++) {
+        for (Rpp32u j = 0; j < numBoxes; j++) {
             int idx = i * maxBoxesPerImage + j;
-            // Random positions within image bounds
-            int maxX = max(1, imgs[i].cols - dropSize);
-            int maxY = max(1, imgs[i].rows - dropSize);
-            int left = rand() % maxX;
-            int top = rand() % maxY;
-            int right = min(left + dropSize, imgs[i].cols);
-            int bottom = min(top + dropSize, imgs[i].rows);
 
-            anchorBoxInfoTensor[idx].lt.x = left;
-            anchorBoxInfoTensor[idx].lt.y = top;
-            anchorBoxInfoTensor[idx].rb.x = right;
-            anchorBoxInfoTensor[idx].rb.y = bottom;
+            // Random box sizes (30 to 110 pixels) - matches single-image implementation
+            int box_w = 30 + (rand() % 80);
+            int box_h = 30 + (rand() % 80);
+            int x = rand() % max(1, w - box_w);
+            int y = rand() % max(1, h - box_h);
+
+            anchorBoxInfoTensor[idx].lt.x = x;
+            anchorBoxInfoTensor[idx].lt.y = y;
+            anchorBoxInfoTensor[idx].rb.x = x + box_w;
+            anchorBoxInfoTensor[idx].rb.y = y + box_h;
+        }
+
+        // Fill remaining boxes with zeros - matches single-image implementation
+        for (Rpp32u j = numBoxes; j < maxBoxesPerImage; j++) {
+            int idx = i * maxBoxesPerImage + j;
+            anchorBoxInfoTensor[idx].lt.x = 0;
+            anchorBoxInfoTensor[idx].lt.y = 0;
+            anchorBoxInfoTensor[idx].rb.x = 0;
+            anchorBoxInfoTensor[idx].rb.y = 0;
         }
     }
 
@@ -6663,7 +6674,7 @@ void benchmark_RPP_HOST_CoarseDropout_Batched(const vector<Mat>& imgs, bool isCo
     auto end = high_resolution_clock::now();
 
     ostringstream params;
-    params << "dropSize=" << dropSize;
+    params << "maxBoxes=" << maxBoxesPerImage;
     printResult("RPP HOST BATCH CoarseDropout", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
