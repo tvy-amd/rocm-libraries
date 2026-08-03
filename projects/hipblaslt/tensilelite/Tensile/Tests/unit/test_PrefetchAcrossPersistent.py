@@ -168,6 +168,7 @@ class _SetupNewTilePapTdmWriter:
         self.do = {"executeToInitEnd": False}
         self.dontAppendCode = False
         self.labels = _StubLabels()
+        self.sgprs = {"WaveIdx": 1}
 
     def _module(self, name):
         return _module_with_comment(name, "unit: %s" % name)
@@ -204,6 +205,9 @@ class _SetupNewTilePapTdmWriter:
 
     def isTdmWaveSeparated(self, kernel):
         return kwa_module.KernelWriterAssembly.isTdmWaveSeparated(self, kernel)
+
+    def isTdmWaveIdxLive(self, kernel):
+        return kwa_module.KernelWriterAssembly.isTdmWaveIdxLive(self, kernel)
 
     def undefineSgpr(self, name):
         return self._module("undefineSgpr_%s" % name)
@@ -608,13 +612,14 @@ def _instruction_index(items, instruction_type, dst, src):
     )
 
 
-def _setup_new_tile_module_names(prefetch_across_persistent, stagger_u_code=False):
+def _setup_new_tile_module_names(prefetch_across_persistent, stagger_u_code=False, **overrides):
     tpa, tpb = _tensor_parameters(with_metadata=True)
     writer = _SetupNewTilePapTdmWriter()
     writer.states.staggerUCode = stagger_u_code
     module = KernelWriter.setupNewTile(
         writer,
-        _setup_new_tile_tdm_kernel(prefetch_across_persistent=prefetch_across_persistent),
+        _setup_new_tile_tdm_kernel(prefetch_across_persistent=prefetch_across_persistent,
+                                   **overrides),
         tpa,
         tpb,
     )
@@ -780,6 +785,44 @@ def test_setup_new_tile_keeps_waveidx_for_wave_separated_tdm_staggeru(monkeypatc
         assert "calculateStagger_A" in module_names
         assert "calculateStagger_B" in module_names
         assert "undefineSgpr_WaveIdx" not in module_names
+
+
+@pytest.mark.parametrize(
+    "kernel_overrides, stagger_u_code, expected",
+    [
+        pytest.param({}, True, True, id="stagger_reads"),
+        pytest.param({}, False, False, id="no_readers"),
+        pytest.param({"TDMSplit": 1}, False, True, id="tdmsplit_reads_without_stagger"),
+        pytest.param({"ClusterBarrier": True}, False, True, id="cluster_barrier"),
+        pytest.param({"NumWaves": 1}, True, False, id="single_wave"),
+        pytest.param({"UseSubtileImpl": True}, True, False, id="subtile"),
+        pytest.param({"UseSubtileImpl": True, "ClusterBarrier": True}, False, True,
+                     id="subtile_cluster_barrier"),
+        pytest.param({"enableTDMA": False, "enableTDMB": False}, True, False, id="non_tdm"),
+    ],
+)
+def test_is_tdm_waveidx_live(kernel_overrides, stagger_u_code, expected):
+    writer = _SetupNewTilePapTdmWriter()
+    writer.states.staggerUCode = stagger_u_code
+    kernel = _setup_new_tile_tdm_kernel(**kernel_overrides)
+
+    assert kwa_module.KernelWriterAssembly.isTdmWaveIdxLive(writer, kernel) is expected
+
+
+def test_setup_new_tile_releases_waveidx_early_for_subtile(monkeypatch):
+    monkeypatch.setattr(kw_module.Component.GSU, "find", lambda writer: _StubGsu())
+    module_names = _setup_new_tile_module_names(prefetch_across_persistent=1,
+                                               UseSubtileImpl=True)
+
+    assert module_names.index("undefineSgpr_WaveIdx") < module_names.index("graWorkGroup")
+
+
+def test_setup_new_tile_keeps_waveidx_for_subtile_cluster_barrier(monkeypatch):
+    monkeypatch.setattr(kw_module.Component.GSU, "find", lambda writer: _StubGsu())
+    module_names = _setup_new_tile_module_names(prefetch_across_persistent=1,
+                                               UseSubtileImpl=True, ClusterBarrier=True)
+
+    assert "undefineSgpr_WaveIdx" not in module_names
 
 
 def test_pap_tdm_descriptor_refresh_threads_temporary_waveidx(monkeypatch):

@@ -399,7 +399,6 @@ class StateValues:
   tailloopInNll: bool                    = False
   tailloopInNllmaxUnit: int              = 0
   staggerUCode: bool                     = 0
-  waveIdxReleasedAfterStagger: bool      = False
   scheduleGROverBarrier: bool            = False
   numLDSBlk: int                         = 0
   IncLdsBufSwitch: bool                  = False
@@ -3016,7 +3015,7 @@ class KernelWriter(metaclass=abc.ABCMeta):
       # TDM StaggerU also reads wave parity from WaveIdx
       if (kernel["enableTDMA"] or kernel["enableTDMB"]) and not kernel["ClusterBarrier"] \
           and not kernel.get("UseSubtileImpl") \
-          and not (self.states.staggerUCode and self.isTdmWaveSeparated(kernel)):
+          and not self.isTdmWaveIdxLive(kernel):
         module.add(self.undefineSgpr("WaveIdx"))
 
       ###########################################################################
