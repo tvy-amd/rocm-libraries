@@ -216,7 +216,6 @@ int main(int argc, char* argv[]) {
     const float satFactor = 1.2f;
     const float contrastFactor = 1.3f;
     const float contrastCenter = 128.f;
-    const float exposureStop = 0.5f;
     const float exposureFactor = 1.4f;
     const float addVal = 10.f;
     const float subVal = 10.f;
@@ -281,7 +280,7 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HOST_Contrast_Batched(imgsGray, false, contrastFactor, contrastCenter, handleHostBatched);
         benchmark_RPP_HIP_Contrast_Batched(imgsGray, false, contrastFactor, contrastCenter, handleHipBatched, streamBatched);
 
-        benchmark_OpenCV_Exposure(imgsGray, false, exposureStop);
+        benchmark_OpenCV_Exposure(imgsGray, false, exposureFactor);
         benchmark_RPP_HOST_Exposure(imgsGray, false, exposureFactor, handleHost);
         benchmark_RPP_HIP_Exposure(imgsGray, false, exposureFactor, handleHip, stream);
         benchmark_RPP_HOST_Exposure_Batched(imgsGray, false, exposureFactor, handleHostBatched);
@@ -579,8 +578,8 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_Phase_Batched(imgsGray, false, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_Normalize(imgsGray, false);
-        benchmark_RPP_HOST_Normalize_SingleImage(imgsGray, false, handleHost);
-        benchmark_RPP_HIP_Normalize_SingleImage(imgsGray, false, handleHip, stream);
+        benchmark_RPP_HOST_Normalize(imgsGray, false, handleHost);
+        benchmark_RPP_HIP_Normalize(imgsGray, false, handleHip, stream);
         benchmark_RPP_HOST_Normalize_Batched(imgsGray, false, handleHostBatched);
         benchmark_RPP_HIP_Normalize_Batched(imgsGray, false, handleHipBatched, streamBatched);
 
@@ -625,7 +624,7 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HOST_Contrast_Batched(imgsRGB, true, contrastFactor, contrastCenter, handleHostBatched);
         benchmark_RPP_HIP_Contrast_Batched(imgsRGB, true, contrastFactor, contrastCenter, handleHipBatched, streamBatched);
 
-        benchmark_OpenCV_Exposure(imgsRGB, true, exposureStop);
+        benchmark_OpenCV_Exposure(imgsRGB, true, exposureFactor);
         benchmark_RPP_HOST_Exposure(imgsRGB, true, exposureFactor, handleHost);
         benchmark_RPP_HIP_Exposure(imgsRGB, true, exposureFactor, handleHip, stream);
         benchmark_RPP_HOST_Exposure_Batched(imgsRGB, true, exposureFactor, handleHostBatched);
@@ -896,10 +895,10 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_Posterize_Batched(imgsRGB, true, 4, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_Solarize(imgsRGB, true, 128);
-        benchmark_RPP_HOST_Solarize(imgsRGB, true, 0.5f, handleHost);  // threshold in [0,1]
-        benchmark_RPP_HIP_Solarize(imgsRGB, true, 0.5f, handleHip, stream);  // threshold in [0,1]
-        benchmark_RPP_HOST_Solarize_Batched(imgsRGB, true, 0.5f, handleHostBatched);  // threshold in [0,1]
-        benchmark_RPP_HIP_Solarize_Batched(imgsRGB, true, 0.5f, handleHipBatched, streamBatched);  // threshold in [0,1]
+        benchmark_RPP_HOST_Solarize(imgsRGB, true, 128, handleHost);
+        benchmark_RPP_HIP_Solarize(imgsRGB, true, 128, handleHip, stream);
+        benchmark_RPP_HOST_Solarize_Batched(imgsRGB, true, 128, handleHostBatched);
+        benchmark_RPP_HIP_Solarize_Batched(imgsRGB, true, 128, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_ColorCast(imgsRGB, true, 20.0f, 10.0f, -15.0f);
         benchmark_RPP_HOST_ColorCast(imgsRGB, true, 20.0f, 10.0f, -15.0f, handleHost);
@@ -932,17 +931,17 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_NonLinearBlend_Batched(imgsRGB, true, 50.0f, handleHipBatched, streamBatched);
 
         cout << "\n--- Dropout Augmentations ---" << endl;
-        benchmark_OpenCV_Erase(imgsRGB, true, 3);
-        benchmark_RPP_HOST_Erase(imgsRGB, true, 3, handleHost);
-        benchmark_RPP_HIP_Erase(imgsRGB, true, 3, handleHip, stream);
-        benchmark_RPP_HOST_Erase_Batched(imgsRGB, true, 3, handleHostBatched);
-        benchmark_RPP_HIP_Erase_Batched(imgsRGB, true, 3, handleHipBatched, streamBatched);
+        benchmark_OpenCV_Erase(imgsRGB, true, 4);
+        benchmark_RPP_HOST_Erase(imgsRGB, true, 4, handleHost);
+        benchmark_RPP_HIP_Erase(imgsRGB, true, 4, handleHip, stream);
+        benchmark_RPP_HOST_Erase_Batched(imgsRGB, true, 4, handleHostBatched);
+        benchmark_RPP_HIP_Erase_Batched(imgsRGB, true, 4, handleHipBatched, streamBatched);
 
-        benchmark_OpenCV_RandomErase(imgsRGB, true);
-        benchmark_RPP_HOST_RandomErase(imgsRGB, true, handleHost);
-        benchmark_RPP_HIP_RandomErase(imgsRGB, true, handleHip, stream);
-        benchmark_RPP_HOST_RandomErase_Batched(imgsRGB, true, 1, handleHostBatched);
-        benchmark_RPP_HIP_RandomErase_Batched(imgsRGB, true, handleHipBatched, streamBatched);
+        benchmark_OpenCV_RandomErase(imgsRGB, true, 4);
+        benchmark_RPP_HOST_RandomErase(imgsRGB, true, 4, handleHost);
+        benchmark_RPP_HIP_RandomErase(imgsRGB, true, 4, handleHip, stream);
+        benchmark_RPP_HOST_RandomErase_Batched(imgsRGB, true, 4, handleHostBatched);
+        benchmark_RPP_HIP_RandomErase_Batched(imgsRGB, true, 4, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_CoarseDropout(imgsRGB, true, 8);
         benchmark_RPP_HOST_CoarseDropout(imgsRGB, true, 8, handleHost);
@@ -968,11 +967,11 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HOST_ChannelDropout_Batched(imgsRGB, true, 0.4f, handleHostBatched);
         benchmark_RPP_HIP_ChannelDropout_Batched(imgsRGB, true, 0.4f, handleHipBatched, streamBatched);
 
-        benchmark_OpenCV_CutoutDropout(imgsRGB, true, 1);
-        benchmark_RPP_HOST_CutoutDropout(imgsRGB, true, 1, handleHost);
-        benchmark_RPP_HIP_CutoutDropout(imgsRGB, true, 1, handleHip, stream);
-        benchmark_RPP_HOST_CutoutDropout_Batched(imgsRGB, true, 1, handleHostBatched);
-        benchmark_RPP_HIP_CutoutDropout_Batched(imgsRGB, true, 1, handleHipBatched, streamBatched);
+        benchmark_OpenCV_CutoutDropout(imgsRGB, true, 4);
+        benchmark_RPP_HOST_CutoutDropout(imgsRGB, true, 4, handleHost);
+        benchmark_RPP_HIP_CutoutDropout(imgsRGB, true, 4, handleHip, stream);
+        benchmark_RPP_HOST_CutoutDropout_Batched(imgsRGB, true, 4, handleHostBatched);
+        benchmark_RPP_HIP_CutoutDropout_Batched(imgsRGB, true, 4, handleHipBatched, streamBatched);
 
         cout << "\n--- Data Operations ---" << endl;
         benchmark_OpenCV_Copy(imgsRGB, true);
@@ -1019,8 +1018,8 @@ int main(int argc, char* argv[]) {
         benchmark_RPP_HIP_Phase_Batched(imgsRGB, true, handleHipBatched, streamBatched);
 
         benchmark_OpenCV_Normalize(imgsRGB, true);
-        benchmark_RPP_HOST_Normalize_SingleImage(imgsRGB, true, handleHost);
-        benchmark_RPP_HIP_Normalize_SingleImage(imgsRGB, true, handleHip, stream);
+        benchmark_RPP_HOST_Normalize(imgsRGB, true, handleHost);
+        benchmark_RPP_HIP_Normalize(imgsRGB, true, handleHip, stream);
         benchmark_RPP_HOST_Normalize_Batched(imgsRGB, true, handleHostBatched);
         benchmark_RPP_HIP_Normalize_Batched(imgsRGB, true, handleHipBatched, streamBatched);
 

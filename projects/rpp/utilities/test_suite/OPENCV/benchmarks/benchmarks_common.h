@@ -41,6 +41,7 @@ SOFTWARE.
 #include <iostream>
 #include <map>
 #include <numeric>
+#include <unordered_set>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -218,7 +219,6 @@ void benchmark_RPP_HOST_Phase(const vector<Mat>& imgs, bool isColor, rppHandle_t
 void benchmark_RPP_HOST_WarpPerspective(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
 void benchmark_RPP_HOST_Remap(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
 void benchmark_RPP_HOST_Normalize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
-void benchmark_RPP_HOST_Normalize_SingleImage(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
 void benchmark_RPP_HOST_FusedMultiplyAddScalar(const vector<Mat>& imgs, bool isColor, Rpp32f mul,
                                           Rpp32f add, rppHandle_t handle);
 void benchmark_RPP_HOST_Emboss(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
@@ -254,7 +254,7 @@ void benchmark_RPP_HOST_CoarseDropout(const vector<Mat>& imgs, bool isColor, Rpp
                                  rppHandle_t handle);
 void benchmark_RPP_HOST_GridDropout(const vector<Mat>& imgs, bool isColor, Rpp32u numGridsPerRow,
                                Rpp32u numGridsPerColumn, rppHandle_t handle);
-void benchmark_RPP_HOST_RandomErase(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
+void benchmark_RPP_HOST_RandomErase(const vector<Mat>& imgs, bool isColor, int numBoxes, rppHandle_t handle);
 void benchmark_RPP_HOST_ColorTwist(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
 void benchmark_RPP_HOST_CropAndPatch(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
 void benchmark_RPP_HOST_CropMirrorNormalize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
@@ -359,7 +359,7 @@ void benchmark_RPP_HIP_NonLinearBlend(const vector<Mat>& imgs, bool isColor, flo
                                  rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_Erase(const vector<Mat>& imgs, bool isColor, int numBoxes,
                         rppHandle_t handle, hipStream_t stream);
-void benchmark_RPP_HIP_RandomErase(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
+void benchmark_RPP_HIP_RandomErase(const vector<Mat>& imgs, bool isColor, int numBoxes, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_CoarseDropout(const vector<Mat>& imgs, bool isColor, Rpp32u maxBoxesPerImage,
                                 rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_GridDropout(const vector<Mat>& imgs, bool isColor, int tileWidth, int tileHeight,
@@ -376,7 +376,7 @@ void benchmark_RPP_HIP_Copy(const vector<Mat>& imgs, bool isColor, rppHandle_t h
 void benchmark_RPP_HIP_ChannelPermute(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_Slice(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_Transpose(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
-void benchmark_RPP_HIP_Normalize_SingleImage(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
+void benchmark_RPP_HIP_Normalize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_FusedMultiplyAddScalar(const vector<Mat>& imgs, bool isColor, float mulVal, float addVal,
                                          rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_CropAndPatch(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
@@ -455,7 +455,7 @@ void benchmark_OpenCV_Erase(const vector<Mat>& imgs, bool isColor, Rpp32u numBox
 void benchmark_OpenCV_CoarseDropout(const vector<Mat>& imgs, bool isColor, Rpp32u numDropouts);
 void benchmark_OpenCV_GridDropout(const vector<Mat>& imgs, bool isColor, Rpp32u numGridsPerRow,
                                   Rpp32u numGridsPerColumn);
-void benchmark_OpenCV_RandomErase(const vector<Mat>& imgs, bool isColor);
+void benchmark_OpenCV_RandomErase(const vector<Mat>& imgs, bool isColor, int numBoxes);
 void benchmark_OpenCV_ColorTwist(const vector<Mat>& imgs, bool isColor);
 void benchmark_OpenCV_CropAndPatch(const vector<Mat>& imgs, bool isColor);
 void benchmark_OpenCV_CropMirrorNormalize(const vector<Mat>& imgs, bool isColor);
@@ -500,11 +500,11 @@ void benchmark_RPP_HIP_ColorTwist_Batched(const vector<Mat>& imgs, bool isColor,
 void benchmark_RPP_HIP_Vignette_Batched(const vector<Mat>& imgs, bool isColor, float vignetteIntensity, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_NonLinearBlend_Batched(const vector<Mat>& imgs, bool isColor, float stdDev, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_Posterize_Batched(const vector<Mat>& imgs, bool isColor, int levelBits, rppHandle_t handle, hipStream_t stream);
-void benchmark_RPP_HIP_Solarize_Batched(const vector<Mat>& imgs, bool isColor, float threshold, rppHandle_t handle, hipStream_t stream);
+void benchmark_RPP_HIP_Solarize_Batched(const vector<Mat>& imgs, bool isColor, int threshold, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_Glitch_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_JpegCompressionDistortion_Batched(const vector<Mat>& imgs, bool isColor, Rpp32s quality, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_Erase_Batched(const vector<Mat>& imgs, bool isColor, int numBoxes, rppHandle_t handle, hipStream_t stream);
-void benchmark_RPP_HIP_RandomErase_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle, hipStream_t stream);
+void benchmark_RPP_HIP_RandomErase_Batched(const vector<Mat>& imgs, bool isColor, int numBoxes, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_CoarseDropout_Batched(const vector<Mat>& imgs, bool isColor, Rpp32u maxBoxesPerImage, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_GridDropout_Batched(const vector<Mat>& imgs, bool isColor, int tileWidth, int tileHeight, rppHandle_t handle, hipStream_t stream);
 void benchmark_RPP_HIP_Gridmask_Batched(const vector<Mat>& imgs, bool isColor, int tileWidth, float ratio, rppHandle_t handle, hipStream_t stream);
@@ -562,7 +562,7 @@ void benchmark_RPP_HOST_ColorTwist_Batched(const vector<Mat>& imgs, bool isColor
 void benchmark_RPP_HOST_Vignette_Batched(const vector<Mat>& imgs, bool isColor, float vignetteIntensity, rppHandle_t handle);
 void benchmark_RPP_HOST_NonLinearBlend_Batched(const vector<Mat>& imgs, bool isColor, float stdDev, rppHandle_t handle);
 void benchmark_RPP_HOST_Posterize_Batched(const vector<Mat>& imgs, bool isColor, int levelBits, rppHandle_t handle);
-void benchmark_RPP_HOST_Solarize_Batched(const vector<Mat>& imgs, bool isColor, float threshold, rppHandle_t handle);
+void benchmark_RPP_HOST_Solarize_Batched(const vector<Mat>& imgs, bool isColor, int threshold, rppHandle_t handle);
 void benchmark_RPP_HOST_Glitch_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle);
 void benchmark_RPP_HOST_JpegCompressionDistortion_Batched(const vector<Mat>& imgs, bool isColor, Rpp32s quality, rppHandle_t handle);
 void benchmark_RPP_HOST_Erase_Batched(const vector<Mat>& imgs, bool isColor, int numBoxes, rppHandle_t handle);

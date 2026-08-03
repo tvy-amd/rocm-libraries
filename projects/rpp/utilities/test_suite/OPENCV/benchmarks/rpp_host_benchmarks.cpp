@@ -91,8 +91,11 @@ void benchmark_RPP_HOST_GammaCorrection(const vector<Mat>& imgs, bool isColor, f
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "gamma=" << gamma;
     printResult("RPP HOST GammaCorrection", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "gamma=" + to_string(gamma));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Blend(const vector<Mat>& imgs, bool isColor, float alpha, rppHandle_t handle) {
@@ -120,8 +123,11 @@ void benchmark_RPP_HOST_Blend(const vector<Mat>& imgs, bool isColor, float alpha
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "alpha=" << alpha;
     printResult("RPP HOST Blend", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "alpha=" + to_string(alpha));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Contrast(const vector<Mat>& imgs, bool isColor, float contrastFactor,
@@ -149,9 +155,11 @@ void benchmark_RPP_HOST_Contrast(const vector<Mat>& imgs, bool isColor, float co
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "factor=" << contrastFactor << ", center=" << contrastCenter;
     printResult("RPP HOST Contrast", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(),
-                "factor=" + to_string(contrastFactor) + ", center=" + to_string(contrastCenter));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Exposure(const vector<Mat>& imgs, bool isColor, float exposureFactor,
@@ -179,9 +187,11 @@ void benchmark_RPP_HOST_Exposure(const vector<Mat>& imgs, bool isColor, float ex
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "factor=" << exposureFactor;
     printResult("RPP HOST Exposure", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(),
-                "factor=" + to_string(exposureFactor));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Hue(const vector<Mat>& imgs, float hueDelta, rppHandle_t handle) {
@@ -208,8 +218,11 @@ void benchmark_RPP_HOST_Hue(const vector<Mat>& imgs, float hueDelta, rppHandle_t
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "hue=" << hueDelta;
     printResult("RPP HOST Hue", imgs.size(), true, duration<double, milli>(end - start).count(),
-                "hueDelta=" + to_string(hueDelta));
+                params.str());
 }
 
 void benchmark_RPP_HOST_Saturation(const vector<Mat>& imgs, float satFactor, rppHandle_t handle) {
@@ -236,8 +249,11 @@ void benchmark_RPP_HOST_Saturation(const vector<Mat>& imgs, float satFactor, rpp
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "factor=" << satFactor;
     printResult("RPP HOST Saturation", imgs.size(), true,
-                duration<double, milli>(end - start).count(), "factor=" + to_string(satFactor));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_ColorToGreyscale(const vector<Mat>& imgs, rppHandle_t handle) {
@@ -392,7 +408,7 @@ void benchmark_RPP_HOST_GaussianFilter(const vector<Mat>& imgs, bool isColor, in
     }
     auto end = high_resolution_clock::now();
     ostringstream params;
-    params << "kernel=" << kernelSize;
+    params << "kernel=" << kernelSize << ", sigma=" << sigma;
     printResult("RPP HOST GaussianFilter", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 }
@@ -423,8 +439,11 @@ void benchmark_RPP_HOST_SobelFilter(const vector<Mat>& imgs, bool isColor, int s
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "type=" << sobelType;
     printResult("RPP HOST SobelFilter", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "type=" + to_string(sobelType));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Emboss(const vector<Mat>& imgs, bool isColor, int kernelSize, float strength,
@@ -857,8 +876,11 @@ void benchmark_RPP_HOST_AddScalar(const vector<Mat>& imgs, bool isColor, float a
                          "add_scalar");
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "value=" << addVal;
     printResult("RPP HOST AddScalar", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "value=" + to_string(addVal));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_SubtractScalar(const vector<Mat>& imgs, bool isColor, float subVal,
@@ -939,8 +961,11 @@ void benchmark_RPP_HOST_SubtractScalar(const vector<Mat>& imgs, bool isColor, fl
             "subtract_scalar");
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "value=" << subVal;
     printResult("RPP HOST SubtractScalar", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "value=" + to_string(subVal));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_MultiplyScalar(const vector<Mat>& imgs, bool isColor, float mulVal,
@@ -1021,8 +1046,11 @@ void benchmark_RPP_HOST_MultiplyScalar(const vector<Mat>& imgs, bool isColor, fl
             "multiply_scalar");
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "value=" << mulVal;
     printResult("RPP HOST MultiplyScalar", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "value=" + to_string(mulVal));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_BitwiseAnd(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -1299,8 +1327,11 @@ void benchmark_RPP_HOST_Threshold(const vector<Mat>& imgs, bool isColor, double 
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "threshold=" << thresh;
     printResult("RPP HOST Threshold", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "threshold=" + to_string(thresh));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_GaussianNoise(const vector<Mat>& imgs, bool isColor, float mean, float stddev,
@@ -1329,9 +1360,11 @@ void benchmark_RPP_HOST_GaussianNoise(const vector<Mat>& imgs, bool isColor, flo
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "mean=" << mean << ", stddev=" << stddev;
     printResult("RPP HOST GaussianNoise", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(),
-                "mean=" + to_string(mean) + ", stddev=" + to_string(stddev));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_SaltAndPepperNoise(const vector<Mat>& imgs, bool isColor, float noiseProb,
@@ -1365,9 +1398,11 @@ void benchmark_RPP_HOST_SaltAndPepperNoise(const vector<Mat>& imgs, bool isColor
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "probability=" << noiseProb;
     printResult("RPP HOST SaltAndPepperNoise", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(),
-                "probability=" + to_string(noiseProb));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Copy(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -1391,8 +1426,10 @@ void benchmark_RPP_HOST_Copy(const vector<Mat>& imgs, bool isColor, rppHandle_t 
         }
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "layout=NHWC";
     printResult("RPP HOST Copy", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_BitwiseXor(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -1531,8 +1568,10 @@ void benchmark_RPP_HOST_Transpose(const vector<Mat>& imgs, bool isColor, rppHand
             "transpose");
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "permutation=0,2,1,3";
     printResult("RPP HOST Transpose", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_LUT(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -1562,7 +1601,9 @@ void benchmark_RPP_HOST_LUT(const vector<Mat>& imgs, bool isColor, rppHandle_t h
         }
     }
     auto end = high_resolution_clock::now();
-    printResult("RPP HOST LUT", imgs.size(), isColor, duration<double, milli>(end - start).count());
+    ostringstream params;
+    params << "lut=inverse";
+    printResult("RPP HOST LUT", imgs.size(), isColor, duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Magnitude(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -1598,8 +1639,10 @@ void benchmark_RPP_HOST_Magnitude(const vector<Mat>& imgs, bool isColor, rppHand
         }
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "inputs=2";
     printResult("RPP HOST Magnitude", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Phase(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -1635,93 +1678,13 @@ void benchmark_RPP_HOST_Phase(const vector<Mat>& imgs, bool isColor, rppHandle_t
         }
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "inputs=2";
     printResult("RPP HOST Phase", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_HOST_Normalize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
-    int num_images = (int)imgs.size();
-    int channels = isColor ? 3 : 1;
-    int height = imgs[0].rows;
-    int width = imgs[0].cols;
-
-    // For normalize, nDim represents the dimensionality of each image (excluding batch)
-    // For 2D images: nDim = 3 (H, W, C)
-    // Descriptor will be 4D: numDims = nDim + 1 = 4 (N, H, W, C)
-    int nDim = 3;
-
-    // Create generic descriptor for 4D tensor (NHWC)
-    RpptGenericDesc genericDesc;
-    genericDesc.numDims = nDim + 1;  // 4D: N, H, W, C
-    genericDesc.offsetInBytes = 0;
-    genericDesc.dataType = RpptDataType::U8;
-    genericDesc.layout = RpptLayout::NHWC;
-    genericDesc.dims[0] = num_images;  // N (batch)
-    genericDesc.dims[1] = height;      // H
-    genericDesc.dims[2] = width;       // W
-    genericDesc.dims[3] = channels;    // C
-
-    // Compute strides for NHWC layout
-    genericDesc.strides[3] = 1;                          // C stride
-    genericDesc.strides[2] = channels;                   // W stride
-    genericDesc.strides[1] = width * channels;           // H stride
-    genericDesc.strides[0] = height * width * channels;  // N stride
-
-    // axisMask: which axes to normalize over (excluding batch dimension N)
-    // Bit 0 = H, Bit 1 = W, Bit 2 = C
-    // axisMask = 0b011 = 3 (normalize over H and W, keep C separate for per-channel normalization)
-    Rpp32u axisMask = 3;
-
-    // Allocate mean and stddev tensors
-    // When normalizing over H and W (axisMask = 3), we keep C dimension
-    // Size = num_images * channels (one mean/stddev per channel per image)
-    Rpp32u meanStddevSize = num_images * channels;
-    vector<Rpp32f> meanTensor(meanStddevSize);
-    vector<Rpp32f> stdDevTensor(meanStddevSize);
-
-    // computeMeanStddev: bit 0 = compute mean, bit 1 = compute stddev
-    // 3 = 0b11 = compute both internally
-    Rpp8u computeMeanStddev = 3;
-
-    // Scale and shift for normalization: output = (input - mean) / stddev * scale + shift
-    Rpp32f scale = 1.0f;
-    Rpp32f shift = 0.0f;
-
-    // ROI tensor: nDim * 2 values per batch item (excluding N dimension)
-    // For nDim=3: [h_start, w_start, c_start, h_size, w_size, c_size]
-    vector<Rpp32u> roiTensor(num_images * nDim * 2);
-    for (int i = 0; i < num_images; ++i) {
-        int idx = i * (nDim * 2);       // 6 values per image
-        roiTensor[idx + 0] = 0;         // h_start
-        roiTensor[idx + 1] = 0;         // w_start
-        roiTensor[idx + 2] = 0;         // c_start
-        roiTensor[idx + 3] = height;    // h_size
-        roiTensor[idx + 4] = width;     // w_size
-        roiTensor[idx + 5] = channels;  // c_size
-    }
-
-    // Concatenate all images into a batch buffer
-    int imageSize = height * width * channels;
-    vector<Rpp8u> inputBuffer(num_images * imageSize);
-    vector<Rpp8u> outputBuffer(num_images * imageSize);
-
-    for (int i = 0; i < num_images; ++i)
-        memcpy(inputBuffer.data() + i * imageSize, imgs[i].data, imageSize);
-
-    auto start = high_resolution_clock::now();
-    for (int k = 0; k < NUM_RUNS; ++k) {
-        CHECK_RPP_STATUS(
-            rppt_normalize(inputBuffer.data(), &genericDesc, outputBuffer.data(), &genericDesc,
-                           axisMask, meanTensor.data(), stdDevTensor.data(), computeMeanStddev,
-                           scale, shift, roiTensor.data(), handle, RPP_HOST_BACKEND),
-            "normalize");
-    }
-    auto end = high_resolution_clock::now();
-    printResult("RPP HOST Normalize", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
-}
-
-void benchmark_RPP_HOST_Normalize_SingleImage(const vector<Mat>& imgs, bool isColor,
+void benchmark_RPP_HOST_Normalize(const vector<Mat>& imgs, bool isColor,
                                          rppHandle_t handle) {
     int num_images = (int)imgs.size();
     int channels = isColor ? 3 : 1;
@@ -1784,8 +1747,10 @@ void benchmark_RPP_HOST_Normalize_SingleImage(const vector<Mat>& imgs, bool isCo
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "mode=auto_compute, scale=" << scale << ", shift=" << shift;
     printResult("RPP HOST Normalize", num_images, isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_WarpPerspective(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -1873,8 +1838,10 @@ void benchmark_RPP_HOST_Remap(const vector<Mat>& imgs, bool isColor, rppHandle_t
         }
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "transform=sine_wave, interpolation=bilinear";
     printResult("RPP HOST Remap", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_FusedMultiplyAddScalar(const vector<Mat>& imgs, bool isColor, Rpp32f mul,
@@ -1953,8 +1920,10 @@ void benchmark_RPP_HOST_FusedMultiplyAddScalar(const vector<Mat>& imgs, bool isC
                          "fused_multiply_add_scalar");
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "mul=" << mul << ", add=" << add;
     printResult("RPP HOST FusedMultiplyAddScalar", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Posterize(const vector<Mat>& imgs, bool isColor, Rpp32u bits,
@@ -2015,10 +1984,10 @@ void benchmark_RPP_HOST_Solarize(const vector<Mat>& imgs, bool isColor, Rpp8u th
         }
     }
     auto end = high_resolution_clock::now();
-    stringstream ss;
-    ss << "threshold=" << (int)threshold;
+    ostringstream params;
+    params << "threshold=" << (int)threshold;
     printResult("RPP HOST Solarize", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), ss.str());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_NoiseShot(const vector<Mat>& imgs, bool isColor, Rpp32f shot_noise_factor,
@@ -2277,10 +2246,10 @@ void benchmark_RPP_HOST_Erase(const vector<Mat>& imgs, bool isColor, Rpp32u boxe
         }
     }
     auto end = high_resolution_clock::now();
-    stringstream ss;
-    ss << "boxes=" << boxesPerImage;
+    ostringstream params;
+    params << "numBoxes=" << boxesPerImage;
     printResult("RPP HOST Erase", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), ss.str());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_CoarseDropout(const vector<Mat>& imgs, bool isColor, Rpp32u maxBoxesPerImage,
@@ -2387,13 +2356,13 @@ void benchmark_RPP_HOST_GridDropout(const vector<Mat>& imgs, bool isColor, Rpp32
         }
     }
     auto end = high_resolution_clock::now();
-    stringstream ss;
-    ss << "grid=" << numGridsPerRow << "x" << numGridsPerColumn << ", holeRatio=" << holeRatio;
+    ostringstream params;
+    params << "tileWidth=" << numGridsPerRow << ", tileHeight=" << numGridsPerColumn;
     printResult("RPP HOST GridDropout", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), ss.str());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_HOST_RandomErase(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
+void benchmark_RPP_HOST_RandomErase(const vector<Mat>& imgs, bool isColor, int numBoxes, rppHandle_t handle) {
     int num_images = (int)imgs.size();
     vector<Mat> out(num_images);
     vector<RpptDesc> srcDescs(num_images);
@@ -2414,34 +2383,38 @@ void benchmark_RPP_HOST_RandomErase(const vector<Mat>& imgs, bool isColor, rppHa
             int h = imgs[i].rows;
             int w = imgs[i].cols;
 
-            // Random box for this image
-            int box_w = 50 + (rand() % 150);
-            int box_h = 50 + (rand() % 150);
-            int x = rand() % max(1, w - box_w);
-            int y = rand() % max(1, h - box_h);
+            for (int b = 0; b < numBoxes; ++b) {
+                // Random box for this image
+                int box_w = 50 + (rand() % 150);
+                int box_h = 50 + (rand() % 150);
+                int x = rand() % max(1, w - box_w);
+                int y = rand() % max(1, h - box_h);
 
-            // Create fresh box for each image
-            RpptRoiLtrb anchorBox;
-            anchorBox.lt.x = x;
-            anchorBox.lt.y = y;
-            anchorBox.rb.x = x + box_w;
-            anchorBox.rb.y = y + box_h;
+                // Create fresh box for each image
+                RpptRoiLtrb anchorBox;
+                anchorBox.lt.x = x;
+                anchorBox.lt.y = y;
+                anchorBox.rb.x = x + box_w;
+                anchorBox.rb.y = y + box_h;
 
-            // Create noise buffer
-            int bufferSize = box_w * box_h * channels;
-            vector<Rpp32f> colorBuffer(bufferSize);
-            for (int j = 0; j < bufferSize; ++j) colorBuffer[j] = (rand() % 256) / 255.0f;
+                // Create noise buffer
+                int bufferSize = box_w * box_h * channels;
+                vector<Rpp32f> colorBuffer(bufferSize);
+                for (int j = 0; j < bufferSize; ++j) colorBuffer[j] = (rand() % 256) / 255.0f;
 
-            CHECK_RPP_STATUS(
-                rppt_random_erase(imgs[i].data, &srcDescs[i], out[i].data, &dstDescs[i], &anchorBox,
-                                  colorBuffer.data(), &rois[i], RpptRoiType::XYWH, handle,
-                                  RPP_HOST_BACKEND),
-                "random_erase");
+                CHECK_RPP_STATUS(
+                    rppt_random_erase(imgs[i].data, &srcDescs[i], out[i].data, &dstDescs[i], &anchorBox,
+                                      colorBuffer.data(), &rois[i], RpptRoiType::XYWH, handle,
+                                      RPP_HOST_BACKEND),
+                    "random_erase");
+            }
         }
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "numBoxes=" << numBoxes;
     printResult("RPP HOST RandomErase", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "");
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_ColorTwist(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -2480,10 +2453,10 @@ void benchmark_RPP_HOST_ColorTwist(const vector<Mat>& imgs, bool isColor, rppHan
         }
     }
     auto end = high_resolution_clock::now();
-    stringstream ss;
-    ss << "hue=" << hueShift[0] << ", sat=" << saturationFactor[0];
+    ostringstream params;
+    params << "hue=" << hueShift[0] << ", saturation=" << saturationFactor[0];
     printResult("RPP HOST ColorTwist", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), ss.str());
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_CropAndPatch(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -2532,8 +2505,11 @@ void benchmark_RPP_HOST_CropAndPatch(const vector<Mat>& imgs, bool isColor, rppH
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "crop=center_quarter, patch=center_quarter";
     printResult("RPP HOST CropAndPatch", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "center_quarter");
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_CropMirrorNormalize(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -2594,8 +2570,11 @@ void benchmark_RPP_HOST_CropMirrorNormalize(const vector<Mat>& imgs, bool isColo
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "crop=half, mirror=horizontal, mean=60/80/100, stddev=0.9";
     printResult("RPP HOST CropMirrorNormalize", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "crop_half+flip+normalize");
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_ResizeMirrorNormalize(const vector<Mat>& imgs, bool isColor,
@@ -2657,8 +2636,11 @@ void benchmark_RPP_HOST_ResizeMirrorNormalize(const vector<Mat>& imgs, bool isCo
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "resize=half, mirror=horizontal, mean=60/80/100, stddev=1";
     printResult("RPP HOST ResizeMirrorNormalize", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "resize_half+flip+normalize");
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_ResizeCropMirror(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -2799,8 +2781,11 @@ void benchmark_RPP_HOST_ChannelDropout(const vector<Mat>& imgs, bool isColor, fl
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "dropoutProb=" << dropoutProb;
     printResult("RPP HOST ChannelDropout", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "prob=" + to_string(dropoutProb));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_CutoutDropout(const vector<Mat>& imgs, bool isColor, Rpp32u numBoxes,
@@ -2845,8 +2830,11 @@ void benchmark_RPP_HOST_CutoutDropout(const vector<Mat>& imgs, bool isColor, Rpp
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "numBoxes=" << numBoxes;
     printResult("RPP HOST CutoutDropout", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "boxes=" + to_string(numBoxes));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_JpegCompressionDistortion(const vector<Mat>& imgs, bool isColor, Rpp32s quality,
@@ -2877,8 +2865,11 @@ void benchmark_RPP_HOST_JpegCompressionDistortion(const vector<Mat>& imgs, bool 
         }
     }
     auto end = high_resolution_clock::now();
+
+    ostringstream params;
+    params << "quality=" << quality;
     printResult("RPP HOST JpegCompressionDistortion", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "quality=" + to_string(quality));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_ChannelPermute(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -2917,8 +2908,10 @@ void benchmark_RPP_HOST_ChannelPermute(const vector<Mat>& imgs, bool isColor, rp
         }
     }
     auto end = high_resolution_clock::now();
+    ostringstream params;
+    params << "permutation=BGR->RGB";
     printResult("RPP HOST ChannelPermute", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "BGR->RGB");
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Slice(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -3024,8 +3017,10 @@ void benchmark_RPP_HOST_Slice(const vector<Mat>& imgs, bool isColor, rppHandle_t
         }
     }
 
+    ostringstream params;
+    params << "slice=center_50%";
     printResult("RPP HOST Slice", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "center_half");
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 // ==================== BATCHED RPP HOST BENCHMARK FUNCTIONS ====================
@@ -3392,8 +3387,11 @@ void benchmark_RPP_HOST_BoxFilter_Batched(const vector<Mat>& imgs, bool isColor,
     free(output);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "kernel=" << kernelSize;
     printResult("RPP HOST BATCH BoxFilter", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_GaussianFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, float sigma,
@@ -3452,8 +3450,11 @@ void benchmark_RPP_HOST_GaussianFilter_Batched(const vector<Mat>& imgs, bool isC
     free(stdDevTensor);
     free(roiTensor);
 
+
+    ostringstream params;
+    params << "kernel=" << kernelSize << ", sigma=" << sigma;
     printResult("RPP HOST BATCH GaussianFilter", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_MedianFilter_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize,
@@ -3509,8 +3510,11 @@ void benchmark_RPP_HOST_MedianFilter_Batched(const vector<Mat>& imgs, bool isCol
     free(output);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "kernel=" << kernelSize;
     printResult("RPP HOST BATCH MedianFilter", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_SobelFilter_Batched(const vector<Mat>& imgs, bool isColor, int sobelType,
@@ -3568,8 +3572,11 @@ void benchmark_RPP_HOST_SobelFilter_Batched(const vector<Mat>& imgs, bool isColo
     free(output);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "type=" << sobelType;
     printResult("RPP HOST BATCH SobelFilter", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "type=" + to_string(sobelType));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_HistogramEqualize_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -3680,8 +3687,10 @@ void benchmark_RPP_HOST_Hue_Batched(const vector<Mat>& imgs, bool isColor, float
     free(hueTensor);
     free(roiTensor);
 
+    ostringstream params;
+    params << "hue=" << hueDelta;
     printResult("RPP HOST BATCH Hue", imgs.size(), true,
-                duration<double, milli>(end - start).count(), "hueDelta=" + to_string(hueDelta));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Saturation_Batched(const vector<Mat>& imgs, bool isColor, float satFactor, rppHandle_t handle) {
@@ -3737,8 +3746,10 @@ void benchmark_RPP_HOST_Saturation_Batched(const vector<Mat>& imgs, bool isColor
     free(saturationTensor);
     free(roiTensor);
 
+    ostringstream params;
+    params << "factor=" << satFactor;
     printResult("RPP HOST BATCH Saturation", imgs.size(), true,
-                duration<double, milli>(end - start).count(), "factor=" + to_string(satFactor));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_ColorToGreyscale_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -3907,9 +3918,10 @@ void benchmark_RPP_HOST_Contrast_Batched(const vector<Mat>& imgs, bool isColor, 
     free(contrastCenterTensor);
     free(roiTensor);
 
+    ostringstream params;
+    params << "factor=" << contrastFactor << ", center=" << contrastCenter;
     printResult("RPP HOST BATCH Contrast", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(),
-                "factor=" + to_string(contrastFactor) + ", center=" + to_string(contrastCenter));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Emboss_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize, float strength,
@@ -4046,8 +4058,11 @@ void benchmark_RPP_HOST_AddScalar_Batched(const vector<Mat>& imgs, bool isColor,
     free(roiTensor);
     free(roi3dTensor);
 
+    
+    ostringstream params;
+    params << "value=" << (int)addVal;
     printResult("RPP HOST BATCH AddScalar", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "value=" + to_string((int)addVal));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_SubtractScalar_Batched(const vector<Mat>& imgs, bool isColor, float subVal,
@@ -4123,8 +4138,11 @@ void benchmark_RPP_HOST_SubtractScalar_Batched(const vector<Mat>& imgs, bool isC
     free(roiTensor);
     free(roi3dTensor);
 
+    
+    ostringstream params;
+    params << "value=" << (int)subVal;
     printResult("RPP HOST BATCH SubtractScalar", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "value=" + to_string((int)subVal));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_MultiplyScalar_Batched(const vector<Mat>& imgs, bool isColor, float mulVal,
@@ -4200,8 +4218,11 @@ void benchmark_RPP_HOST_MultiplyScalar_Batched(const vector<Mat>& imgs, bool isC
     free(roiTensor);
     free(roi3dTensor);
 
+    
+    ostringstream params;
+    params << "value=" << mulVal;
     printResult("RPP HOST BATCH MultiplyScalar", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "value=" + to_string(mulVal));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_GaussianNoise_Batched(const vector<Mat>& imgs, bool isColor, float mean,
@@ -4263,9 +4284,12 @@ void benchmark_RPP_HOST_GaussianNoise_Batched(const vector<Mat>& imgs, bool isCo
     free(stddevTensor);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "mean=" << mean << ", stddev=" << stddev;
     printResult("RPP HOST BATCH GaussianNoise", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(),
-                "mean=" + to_string(mean) + ", stddev=" + to_string(stddev));
+                params.str());
 }
 
 void benchmark_RPP_HOST_SaltAndPepperNoise_Batched(const vector<Mat>& imgs, bool isColor, float noiseProb,
@@ -4335,8 +4359,11 @@ void benchmark_RPP_HOST_SaltAndPepperNoise_Batched(const vector<Mat>& imgs, bool
     free(pepperValueTensor);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "probability=" << noiseProb;
     printResult("RPP HOST BATCH SaltAndPepperNoise", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "probability=" + to_string(noiseProb));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_NoiseShot_Batched(const vector<Mat>& imgs, bool isColor, float shotNoiseFactor,
@@ -4394,8 +4421,11 @@ void benchmark_RPP_HOST_NoiseShot_Batched(const vector<Mat>& imgs, bool isColor,
     free(shotNoiseTensor);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "factor=" << shotNoiseFactor;
     printResult("RPP HOST BATCH NoiseShot", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "factor=" + to_string(shotNoiseFactor));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_ColorCast_Batched(const vector<Mat>& imgs, bool isColor, float rShift, float gShift,
@@ -4519,8 +4549,11 @@ void benchmark_RPP_HOST_ColorTemperature_Batched(const vector<Mat>& imgs, bool i
     free(adjustmentTensor);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "adjustment=" << adjustmentValue;
     printResult("RPP HOST BATCH ColorTemperature", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "adjustment=" + to_string(adjustmentValue));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_ColorTwist_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -4579,7 +4612,7 @@ void benchmark_RPP_HOST_ColorTwist_Batched(const vector<Mat>& imgs, bool isColor
     auto end = high_resolution_clock::now();
 
     ostringstream params;
-    params << "hue=" << hueShift[0] << ", sat=" << satFactor[0];
+    params << "hue=" << hueShift[0] << ", saturation=" << satFactor[0];
     printResult("RPP HOST BATCH ColorTwist", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
@@ -4647,8 +4680,11 @@ void benchmark_RPP_HOST_Vignette_Batched(const vector<Mat>& imgs, bool isColor, 
     free(intensityTensor);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "intensity=" << vignetteIntensity;
     printResult("RPP HOST BATCH Vignette", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "intensity=" + to_string(vignetteIntensity));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_NonLinearBlend_Batched(const vector<Mat>& imgs, bool isColor, float stdDev,
@@ -4712,8 +4748,11 @@ void benchmark_RPP_HOST_NonLinearBlend_Batched(const vector<Mat>& imgs, bool isC
     free(stdDevTensor);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "stdDev=" << stdDev;
     printResult("RPP HOST BATCH NonLinearBlend", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "stdDev=" + to_string(stdDev));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Posterize_Batched(const vector<Mat>& imgs, bool isColor, int levelBits,
@@ -4771,11 +4810,14 @@ void benchmark_RPP_HOST_Posterize_Batched(const vector<Mat>& imgs, bool isColor,
     free(posterizeLevelBits);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "bits=" << levelBits;
     printResult("RPP HOST BATCH Posterize", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "levelBits=" + to_string(levelBits));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
-void benchmark_RPP_HOST_Solarize_Batched(const vector<Mat>& imgs, bool isColor, float threshold,
+void benchmark_RPP_HOST_Solarize_Batched(const vector<Mat>& imgs, bool isColor, int threshold,
                                          rppHandle_t handle) {
     int batchSize = (int)imgs.size();
     if (batchSize == 0) return;
@@ -4802,7 +4844,7 @@ void benchmark_RPP_HOST_Solarize_Batched(const vector<Mat>& imgs, bool isColor, 
     RpptROI *roiTensor = static_cast<RpptROI*>(calloc(batchSize, sizeof(RpptROI)));
 
     for (int i = 0; i < batchSize; i++) {
-        thresholdTensor[i] = threshold;
+        thresholdTensor[i] = threshold / 255.0f;
         roiTensor[i].xywhROI.xy.x = 0;
         roiTensor[i].xywhROI.xy.y = 0;
         roiTensor[i].xywhROI.roiWidth = imgs[i].cols;
@@ -4830,8 +4872,11 @@ void benchmark_RPP_HOST_Solarize_Batched(const vector<Mat>& imgs, bool isColor, 
     free(thresholdTensor);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "threshold=" << threshold;
     printResult("RPP HOST BATCH Solarize", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "threshold=" + to_string(threshold));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Glitch_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -4947,8 +4992,10 @@ void benchmark_RPP_HOST_JpegCompressionDistortion_Batched(const vector<Mat>& img
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "quality=" << quality;
     printResult("RPP HOST BATCH JpegCompressionDistortion", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "quality=" + to_string(quality));
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input);
     free(output);
@@ -5291,8 +5338,11 @@ void benchmark_RPP_HOST_Threshold_Batched(const vector<Mat>& imgs, bool isColor,
     free(maxTensor);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "threshold=" << thresh;
     printResult("RPP HOST BATCH Threshold", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "threshold=" + to_string(thresh));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_WarpAffine_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -5632,8 +5682,10 @@ void benchmark_RPP_HOST_GammaCorrection_Batched(const vector<Mat>& imgs, bool is
     free(gammaTensor);
     free(roiTensor);
 
+    ostringstream params;
+    params << "gamma=" << gamma;
     printResult("RPP HOST BATCH GammaCorrection", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "gamma=" + to_string(gamma));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Exposure_Batched(const vector<Mat>& imgs, bool isColor, float exposureFactor,
@@ -5691,8 +5743,10 @@ void benchmark_RPP_HOST_Exposure_Batched(const vector<Mat>& imgs, bool isColor, 
     free(exposureTensor);
     free(roiTensor);
 
+    ostringstream params;
+    params << "factor=" << exposureFactor;
     printResult("RPP HOST BATCH Exposure", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "factor=" + to_string(exposureFactor));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Blend_Batched(const vector<Mat>& imgs, bool isColor, float alpha, rppHandle_t handle) {
@@ -5759,8 +5813,11 @@ void benchmark_RPP_HOST_Blend_Batched(const vector<Mat>& imgs, bool isColor, flo
     free(alphaTensor);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "alpha=" << alpha;
     printResult("RPP HOST BATCH Blend", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "alpha=" + to_string(alpha));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Erode_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize,
@@ -5814,8 +5871,11 @@ void benchmark_RPP_HOST_Erode_Batched(const vector<Mat>& imgs, bool isColor, int
     free(output);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "kernel=" << kernelSize;
     printResult("RPP HOST BATCH Erode", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_Dilate_Batched(const vector<Mat>& imgs, bool isColor, int kernelSize,
@@ -5869,8 +5929,11 @@ void benchmark_RPP_HOST_Dilate_Batched(const vector<Mat>& imgs, bool isColor, in
     free(output);
     free(roiTensor);
 
+    
+    ostringstream params;
+    params << "kernel=" << kernelSize;
     printResult("RPP HOST BATCH Dilate", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "kernel=" + to_string(kernelSize));
+                duration<double, milli>(end - start).count(), params.str());
 }
 
 void benchmark_RPP_HOST_BitwiseAnd_Batched(const vector<Mat>& imgs, bool isColor, rppHandle_t handle) {
@@ -6724,8 +6787,10 @@ void benchmark_RPP_HOST_Copy_Batched(const vector<Mat>& imgs, bool isColor, rppH
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "layout=NHWC";
     printResult("RPP HOST BATCH Copy", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "");
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input);
     free(output);
@@ -6810,8 +6875,10 @@ void benchmark_RPP_HOST_Slice_Batched(const vector<Mat>& imgs, bool isColor, rpp
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "slice=center_50%";
     printResult("RPP HOST BATCH Slice", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "");
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input);
     free(output);
@@ -7018,8 +7085,10 @@ void benchmark_RPP_HOST_LUT_Batched(const vector<Mat>& imgs, bool isColor, rppHa
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "lut=inverse";
     printResult("RPP HOST BATCH LUT", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "");
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input);
     free(output);
@@ -7080,8 +7149,10 @@ void benchmark_RPP_HOST_Magnitude_Batched(const vector<Mat>& imgs, bool isColor,
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "inputs=2";
     printResult("RPP HOST BATCH Magnitude", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "");
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input1);
     free(input2);
@@ -7152,7 +7223,7 @@ void benchmark_RPP_HOST_FusedMultiplyAddScalar_Batched(const vector<Mat>& imgs, 
     auto end = high_resolution_clock::now();
 
     ostringstream params;
-    params << "mul=" << mulVal << ",add=" << addVal;
+    params << "mul=" << mulVal << ", add=" << addVal;
     printResult("RPP HOST BATCH FusedMultiplyAddScalar", imgs.size(), isColor,
                 duration<double, milli>(end - start).count(), params.str());
 
@@ -7224,8 +7295,10 @@ void benchmark_RPP_HOST_Remap_Batched(const vector<Mat>& imgs, bool isColor, rpp
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "transform=sine_wave, interpolation=bilinear";
     printResult("RPP HOST BATCH Remap", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "interpolation=bilinear");
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input);
     free(output);
@@ -7291,8 +7364,10 @@ void benchmark_RPP_HOST_Phase_Batched(const vector<Mat>& imgs, bool isColor, rpp
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "inputs=2";
     printResult("RPP HOST BATCH Phase", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input1);
     free(input2);
@@ -7372,8 +7447,10 @@ void benchmark_RPP_HOST_Normalize_Batched(const vector<Mat>& imgs, bool isColor,
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "mode=auto_compute, scale=" << scale << ", shift=" << shift;
     printResult("RPP HOST BATCH Normalize", imgs.size(), isColor,
-                duration<double, milli>(end - start).count());
+                duration<double, milli>(end - start).count(), params.str());
 
     free(inputBuffer);
     free(outputBuffer);
@@ -7456,8 +7533,10 @@ void benchmark_RPP_HOST_CropAndPatch_Batched(const vector<Mat>& imgs, bool isCol
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "crop=center_quarter, patch=center_quarter";
     printResult("RPP HOST BATCH CropAndPatch", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "center_quarter");
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input1);
     free(input2);
@@ -7550,8 +7629,10 @@ void benchmark_RPP_HOST_CropMirrorNormalize_Batched(const vector<Mat>& imgs, boo
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "crop=half, mirror=horizontal, mean=60/80/100, stddev=0.9";
     printResult("RPP HOST BATCH CropMirrorNormalize", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "crop_half+flip+normalize");
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input);
     free(output);
@@ -7647,8 +7728,10 @@ void benchmark_RPP_HOST_ResizeMirrorNormalize_Batched(const vector<Mat>& imgs, b
     }
     auto end = high_resolution_clock::now();
 
+    ostringstream params;
+    params << "resize=half, mirror=horizontal, mean=60/80/100, stddev=1";
     printResult("RPP HOST BATCH ResizeMirrorNormalize", imgs.size(), isColor,
-                duration<double, milli>(end - start).count(), "resize_half+flip+normalize");
+                duration<double, milli>(end - start).count(), params.str());
 
     free(input);
     free(output);

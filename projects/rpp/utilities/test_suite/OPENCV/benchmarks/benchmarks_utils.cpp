@@ -147,8 +147,11 @@ void printResult(const string& name, int batchSize, bool isColor, double totalMs
         return;
     }
 
+    // Operations that use type parameter for unique naming (e.g., Resize_Bilinear, SobelFilter_0)
+    static const unordered_set<string> opsWithTypeParameter = {"Resize", "Flip", "SobelFilter"};
+
     string displayName = opName;
-    if ((opName == "Resize" || opName == "Flip") && !params.empty()) {
+    if (opsWithTypeParameter.count(opName) && !params.empty()) {
         size_t typePos = params.find("type=");
         if (typePos != string::npos) {
             size_t endPos = params.find(",", typePos);
@@ -329,6 +332,11 @@ string getGPUArchitectureName() {
         }
         string gcnArchName(prop.gcnArchName);
         if (!gcnArchName.empty()) {
+            // Strip feature flags after colon for clean file naming
+            size_t colonPos = gcnArchName.find(':');
+            if (colonPos != string::npos) {
+                return gcnArchName.substr(0, colonPos);
+            }
             return gcnArchName;
         }
     }
