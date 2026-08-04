@@ -1,26 +1,44 @@
-ARG BASE_DOCKER="rocm/pytorch-nightly:nightly"
+# rocm/pytorch-nightly:latest is abandoned (last pushed 2026-04-29); the maintained
+# tags are the moving :nightly and the dated :nightly-<date>-<pytorch-sha>. Those
+# images default to USER jenkins and carry the pytorch tree at
+# /var/lib/jenkins/pytorch, while the retired :latest ran as root with the tree at
+# /tmp/pytorch, so neither the user nor the path can be assumed here.
+ARG BASE_DOCKER="rocm/pytorch-nightly:nightly-20260803-a533e5c"
 FROM $BASE_DOCKER
 ARG CK_PYTORCH_BRANCH="develop"
-RUN groupadd -g 109 render && \
-    usermod -u 1001 jenkins && \
-    groupmod -g 1001 jenkins && \
-    pip install --upgrade pandas && \
-    cd /tmp/pytorch && \
-    rm -rf build && \
-    cd /tmp/pytorch/third_party && \
-    rm -rf composable_kernel && \
-    git clone -b "$CK_PYTORCH_BRANCH" https://github.com/ROCm/composable_kernel.git && \
-    cd /tmp/pytorch/third_party/aiter/3rdparty && \
-    rm -rf composable_kernel && \
-    git clone -b "$CK_PYTORCH_BRANCH" https://github.com/ROCm/composable_kernel.git && \
-    cd /tmp/pytorch/third_party/fbgemm/external && \
-    rm -rf composable_kernel && \
-    git clone -b "$CK_PYTORCH_BRANCH" https://github.com/ROCm/composable_kernel.git && \
-    cd /tmp/pytorch/third_party/flash-attention/csrc && \
-    rm -rf composable_kernel && \
-    git clone -b "$CK_PYTORCH_BRANCH" https://github.com/ROCm/composable_kernel.git && \
-    mkdir -p /var/jenkins/workspace/pytorch && \
-    cp -r /tmp/pytorch/* /var/jenkins/workspace/pytorch/ && \
-    chown -R jenkins:jenkins /var/jenkins/workspace/pytorch && \
-    chmod -R a+rwx /var/jenkins/workspace/pytorch && \
-    sudo usermod -aG irc jenkins
+# Path of the pytorch source tree inside BASE_DOCKER; empty means autodetect.
+ARG PYTORCH_SRC=""
+# groupadd/usermod/groupmod need root, which BASE_DOCKER no longer provides.
+USER root
+RUN set -eux; \
+    if [ -n "$PYTORCH_SRC" ]; then \
+        pt="$PYTORCH_SRC"; \
+    elif [ -d /var/lib/jenkins/pytorch/third_party ]; then \
+        pt=/var/lib/jenkins/pytorch; \
+    elif [ -d /tmp/pytorch/third_party ]; then \
+        pt=/tmp/pytorch; \
+    else \
+        echo "no pytorch source tree found in /var/lib/jenkins/pytorch or /tmp/pytorch;" >&2; \
+        echo "pass --build-arg PYTORCH_SRC=<path> for this base image" >&2; \
+        exit 1; \
+    fi; \
+    echo "using pytorch source at $pt"; \
+    groupadd -f -g 109 render; \
+    usermod -u 1001 jenkins; \
+    groupmod -g 1001 jenkins; \
+    pip install --upgrade pandas; \
+    rm -rf "$pt/build"; \
+    for vendored in \
+            third_party \
+            third_party/aiter/3rdparty \
+            third_party/fbgemm/external \
+            third_party/flash-attention/csrc; do \
+        rm -rf "$pt/$vendored/composable_kernel"; \
+        git clone -b "$CK_PYTORCH_BRANCH" https://github.com/ROCm/composable_kernel.git \
+            "$pt/$vendored/composable_kernel"; \
+    done; \
+    mkdir -p /var/jenkins/workspace/pytorch; \
+    cp -r "$pt"/* /var/jenkins/workspace/pytorch/; \
+    chown -R jenkins:jenkins /var/jenkins/workspace/pytorch; \
+    chmod -R a+rwx /var/jenkins/workspace/pytorch; \
+    usermod -aG irc jenkins
