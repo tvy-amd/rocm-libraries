@@ -4,7 +4,6 @@
 #pragma once
 
 #include <cassert>
-#include <cmath>
 #include <functional>
 #include <hipdnn_data_sdk/types.hpp>
 #include <hipdnn_data_sdk/utilities/MigratableMemory.hpp>
@@ -830,7 +829,6 @@ public:
             *static_cast<T*>(valuePtr) = static_cast<T>(distribution(generator));
         }
     }
-
     bool isPacked() const override
     {
         return _packed;
