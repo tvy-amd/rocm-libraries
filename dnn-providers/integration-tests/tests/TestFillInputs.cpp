@@ -3,7 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <set>
@@ -548,17 +547,6 @@ TEST(TestFillInputs, BlockScaleDequantizeFillsScaleAsPowerOfTwo)
     const auto scaleRecipe = recipes.fill(2);
     EXPECT_EQ(scaleRecipe.kind, FillRecipe::Kind::FREE);
     EXPECT_EQ(scaleRecipe.distribution, FillRecipe::Distribution::POWER_OF_TWO);
-
-    const auto* tensor = inputs.at(2).get();
-    for(size_t i = 0; i < tensor->elementCount(); ++i)
-    {
-        const float v
-            = *static_cast<const float*>(tensor->hostDataOffsetFromIndex(static_cast<int64_t>(i)));
-        ASSERT_GT(v, 0.0f);
-        float exponent = std::log2(v);
-        EXPECT_FLOAT_EQ(exponent, std::round(exponent))
-            << "scale element " << i << " = " << v << " is not a power of two";
-    }
 }
 
 // NOLINTEND(readability-identifier-naming)

@@ -75,13 +75,6 @@ public:
         throwNotSupported();
     }
 
-    void fillWithRandomPowerOfTwoValues([[maybe_unused]] float lo,
-                                        [[maybe_unused]] float hi,
-                                        [[maybe_unused]] unsigned int seed) override
-    {
-        throwNotSupported();
-    }
-
     size_t fillWithData([[maybe_unused]] const void* data,
                         [[maybe_unused]] size_t maxBytesCopied) override
     {

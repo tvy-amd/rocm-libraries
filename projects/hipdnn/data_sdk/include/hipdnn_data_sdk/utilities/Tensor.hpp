@@ -480,10 +480,6 @@ public:
     virtual void
         fillTensorWithRandomValues(float min, float max, unsigned int seed = std::random_device{}())
         = 0;
-    virtual void fillTensorWithRandomPowerOfTwoValues(float lo,
-                                                      float hi,
-                                                      unsigned int seed = std::random_device{}())
-        = 0;
     virtual void fillWithSentinelValue() = 0;
     virtual size_t fillWithData(const void* data, size_t bytesCopied) = 0;
 
@@ -599,13 +595,6 @@ public:
         fillWithRandomValues(static_cast<T>(min), static_cast<T>(max), seed);
     }
 
-    void fillTensorWithRandomPowerOfTwoValues(float lo,
-                                              float hi,
-                                              unsigned int seed = std::random_device{}()) override
-    {
-        fillWithRandomPowerOfTwoValues(lo, hi, seed);
-    }
-
     void fillWithSentinelValue() override
     {
         if constexpr(std::numeric_limits<T>::has_quiet_NaN)
@@ -675,7 +664,6 @@ public:
 
     virtual void fillWithValue(T value) = 0;
     virtual void fillWithRandomValues(T min, T max, unsigned int seed = std::random_device{}()) = 0;
-    virtual void fillWithRandomPowerOfTwoValues(float lo, float hi, unsigned int seed) = 0;
 
     ITensorIterator<false> begin() override
     {
@@ -840,20 +828,6 @@ public:
         for(auto valuePtr : (*this))
         {
             *static_cast<T*>(valuePtr) = static_cast<T>(distribution(generator));
-        }
-    }
-
-    void fillWithRandomPowerOfTwoValues(float lo, float hi, unsigned int seed) override
-    {
-        const int eLo = static_cast<int>(std::ceil(std::log2(lo)));
-        const int eHi = static_cast<int>(std::floor(std::log2(hi)));
-        std::mt19937 gen(seed);
-        std::uniform_int_distribution<int> expDist(eLo, eHi);
-        _memory.markHostModified();
-        for(auto valuePtr : (*this))
-        {
-            *static_cast<T*>(valuePtr)
-                = static_cast<T>(std::exp2f(static_cast<float>(expDist(gen))));
         }
     }
 

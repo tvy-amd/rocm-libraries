@@ -4,7 +4,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -327,20 +326,6 @@ public:
         for(auto valuePtr : (*this))
         {
             *static_cast<T*>(valuePtr) = static_cast<T>(distribution(generator));
-        }
-    }
-
-    void fillWithRandomPowerOfTwoValues(float lo, float hi, unsigned int seed) override
-    {
-        const int eLo = static_cast<int>(std::ceil(std::log2(lo)));
-        const int eHi = static_cast<int>(std::floor(std::log2(hi)));
-        std::mt19937 gen(seed);
-        std::uniform_int_distribution<int> expDist(eLo, eHi);
-        _memory.markHostModified();
-        for(auto valuePtr : (*this))
-        {
-            *static_cast<T*>(valuePtr)
-                = static_cast<T>(std::exp2f(static_cast<float>(expDist(gen))));
         }
     }
 

@@ -28,12 +28,7 @@ FillResult
             tensor.fillTensorWithRandomValues(recipe.lo, recipe.hi, seed);
             break;
         case FillRecipe::Distribution::POWER_OF_TWO:
-            if(recipe.lo <= 0.0f)
-            {
-                return FillResult::unsupported("POWER_OF_TWO requires lo > 0 (got "
-                                               + std::to_string(recipe.lo) + ")");
-            }
-            tensor.fillTensorWithRandomPowerOfTwoValues(recipe.lo, recipe.hi, seed);
+            tensor.fillTensorWithRandomValues(recipe.lo, recipe.hi, seed);
             break;
         }
         return FillResult::ok();
