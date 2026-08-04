@@ -30,6 +30,8 @@ FillResult
         case FillRecipe::Distribution::POWER_OF_TWO:
             tensor.fillTensorWithRandomValues(recipe.lo, recipe.hi, seed);
             break;
+        default:
+            return FillResult::unsupported("unknown FillRecipe distribution");
         }
         return FillResult::ok();
     case FillRecipe::Kind::FIXED:
