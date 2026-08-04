@@ -85,7 +85,7 @@ from Tensile.Toolchain.Component import Assembler
 from Tensile.Utilities.Decorators.Profile import profile
 from Tensile.Utilities.Decorators.Timing import timing
 
-from ..Resources import copy_static_headers
+from ..resources import copy_static_headers
 from .ParseArguments import parseArguments
 
 
