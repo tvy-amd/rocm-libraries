@@ -178,7 +178,7 @@ TEST(TestTypes, DataTypeCudnnCompatHasNoBackendMapping)
 // (source compatibility for the cuDNN shim). These lock the exact integers
 // so an accidental reorder is caught at test time. hipDNN-only enumerators
 // are pinned to their own hipDNN values so a reorder still trips a test.
-TEST(TestTypes, EnumValuesMatchCudnn_SmallEnums)
+TEST(TestTypes, EnumValuesMatchCudnnSmallEnums)
 {
     using namespace hipdnn_frontend;
 
@@ -247,7 +247,7 @@ TEST(TestTypes, EnumValuesMatchCudnn_SmallEnums)
     EXPECT_EQ(static_cast<int>(AttentionImplementation::UNIFIED), 2);
 }
 
-TEST(TestTypes, EnumValuesMatchCudnn_BehaviorNote)
+TEST(TestTypes, EnumValuesMatchCudnnBehaviorNote)
 {
     using namespace hipdnn_frontend;
 
@@ -266,7 +266,7 @@ TEST(TestTypes, EnumValuesMatchCudnn_BehaviorNote)
     EXPECT_EQ(static_cast<int>(BehaviorNote::SUPPORTS_EXECUTION_PLAN_SERIALIZATION), 9);
 }
 
-TEST(TestTypes, EnumValuesMatchCudnn_Pointwise)
+TEST(TestTypes, EnumValuesMatchCudnnPointwise)
 {
     using namespace hipdnn_frontend;
 
@@ -325,7 +325,7 @@ TEST(TestTypes, EnumValuesMatchCudnn_Pointwise)
     EXPECT_EQ(static_cast<int>(PointwiseMode::COUNT), 51);
 }
 
-TEST(TestTypes, EnumValuesMatchCudnn_DataType)
+TEST(TestTypes, EnumValuesMatchCudnnDataType)
 {
     using namespace hipdnn_frontend;
 
