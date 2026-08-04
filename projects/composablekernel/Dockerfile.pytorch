@@ -31,6 +31,24 @@ RUN set -eux; \
     groupmod -g 1001 jenkins; \
     pip install --upgrade pandas; \
     rm -rf "$pt/build"; \
+    if [ ! -d "$pt/third_party" ]; then \
+        echo "$pt has no third_party directory; not a pytorch source tree" >&2; \
+        exit 1; \
+    fi; \
+    for submodule in \
+            third_party/aiter \
+            third_party/fbgemm \
+            third_party/flash-attention; do \
+        if [ -n "$(ls -A "$pt/$submodule" 2>/dev/null)" ]; then \
+            continue; \
+        fi; \
+        if [ ! -e "$pt/.git" ]; then \
+            echo "cannot populate $submodule: no .git in $pt" >&2; \
+            exit 1; \
+        fi; \
+        echo "populating $submodule (empty in this base image)"; \
+        git -C "$pt" submodule update --init --depth 1 "$submodule"; \
+    done; \
     rm -rf /tmp/rocm-libraries; \
     git clone --depth 1 --filter=blob:none --sparse -b "$CK_PYTORCH_BRANCH" \
         https://github.com/ROCm/rocm-libraries.git /tmp/rocm-libraries; \
@@ -40,6 +58,7 @@ RUN set -eux; \
             third_party/aiter/3rdparty \
             third_party/fbgemm/external \
             third_party/flash-attention/csrc; do \
+        mkdir -p "$pt/$vendored"; \
         rm -rf "$pt/$vendored/composable_kernel"; \
         cp -r /tmp/rocm-libraries/projects/composablekernel \
             "$pt/$vendored/composable_kernel"; \
