@@ -1,13 +1,18 @@
 
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
-ARG ROCMVERSION=7.13
+ARG ROCMVERSION=7.14
+
+# Release compiler configuration: the ROCm tarball and the matching amdgpu driver installer.
+ARG ROCM_TARBALL_VERSION=7.14.0
+ARG AMDGPU_INSTALL_BRANCH=31.40
+ARG AMDGPU_INSTALL_VERSION=31.40.314000-1
 
 # TheRock nightly tarball configuration.
 # By default, discovers the latest tarball from the nightlies index.
 # Manual overrides:
 #   Pin a specific tarball:
-#     --build-arg TARBALL_URL=https://rocm.nightlies.amd.com/tarball-multi-arch/therock-dist-linux-multiarch-7.13.0a20260430.tar.gz
+#     --build-arg TARBALL_URL=https://rocm.nightlies.amd.com/tarball-multi-arch/therock-dist-linux-multiarch-7.14.0a20260430.tar.gz
 #   Change the arch variant (default: multiarch):
 #     --build-arg TARBALL_PATTERN=therock-dist-linux-gfx90a
 #     --build-arg TARBALL_PATTERN=therock-dist-linux-gfx94X-dcgpu
@@ -42,12 +47,12 @@ RUN if [ "$compiler_version" = "therock" ]; then \
         tar -xzf /tmp/rocm.tar.gz -C /opt/rocm --strip-components=1 && \
         rm /tmp/rocm.tar.gz ; \
     else echo "using the release compiler" && \
-        wget https://repo.amd.com/rocm/tarball-multi-arch/therock-dist-linux-multiarch-7.13.0.tar.gz && \
+        wget https://repo.amd.com/rocm/tarball-multi-arch/therock-dist-linux-multiarch-${ROCM_TARBALL_VERSION}.tar.gz && \
         rm -rf /opt/rocm && mkdir /opt/rocm && \
-        tar -xzf therock-dist-linux-multiarch-7.13.0.tar.gz -C /opt/rocm --strip-components=1 && \
-        rm therock-dist-linux-multiarch-7.13.0.tar.gz && \
-        wget https://repo.radeon.com/amdgpu-install/31.30/ubuntu/noble/amdgpu-install_31.30.313000-1_all.deb && \
-        apt install ./amdgpu-install_31.30.313000-1_all.deb -y; \
+        tar -xzf therock-dist-linux-multiarch-${ROCM_TARBALL_VERSION}.tar.gz -C /opt/rocm --strip-components=1 && \
+        rm therock-dist-linux-multiarch-${ROCM_TARBALL_VERSION}.tar.gz && \
+        wget https://repo.radeon.com/amdgpu-install/${AMDGPU_INSTALL_BRANCH}/ubuntu/noble/amdgpu-install_${AMDGPU_INSTALL_VERSION}_all.deb && \
+        apt install ./amdgpu-install_${AMDGPU_INSTALL_VERSION}_all.deb -y; \
     fi
     
 # Install SCCACHE

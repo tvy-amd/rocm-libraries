@@ -55,7 +55,7 @@ get_container_name() {
 
 # Get Docker image (respects CK_DOCKER_IMAGE env var)
 get_docker_image() {
-    echo "${CK_DOCKER_IMAGE:-rocm/composable_kernel:ck_ub24.04_rocm7.0.1}"
+    echo "${CK_DOCKER_IMAGE:-rocm/composable_kernel:ck_ub24.04_rocm7.14}"
 }
 
 # Check if container exists (exact match)
