@@ -5,6 +5,9 @@
 # /tmp/pytorch, so neither the user nor the path can be assumed here.
 ARG BASE_DOCKER="rocm/pytorch-nightly:nightly-20260803-a533e5c"
 FROM $BASE_DOCKER
+# Branch (or tag) of ROCm/rocm-libraries to take CK from. The retired standalone
+# ROCm/composable_kernel mirror does not carry monorepo branch or PR refs, so CK
+# comes from the monorepo itself.
 ARG CK_PYTORCH_BRANCH="develop"
 # Path of the pytorch source tree inside BASE_DOCKER; empty means autodetect.
 ARG PYTORCH_SRC=""
@@ -28,15 +31,20 @@ RUN set -eux; \
     groupmod -g 1001 jenkins; \
     pip install --upgrade pandas; \
     rm -rf "$pt/build"; \
+    rm -rf /tmp/rocm-libraries; \
+    git clone --depth 1 --filter=blob:none --sparse -b "$CK_PYTORCH_BRANCH" \
+        https://github.com/ROCm/rocm-libraries.git /tmp/rocm-libraries; \
+    git -C /tmp/rocm-libraries sparse-checkout set projects/composablekernel; \
     for vendored in \
             third_party \
             third_party/aiter/3rdparty \
             third_party/fbgemm/external \
             third_party/flash-attention/csrc; do \
         rm -rf "$pt/$vendored/composable_kernel"; \
-        git clone -b "$CK_PYTORCH_BRANCH" https://github.com/ROCm/composable_kernel.git \
+        cp -r /tmp/rocm-libraries/projects/composablekernel \
             "$pt/$vendored/composable_kernel"; \
     done; \
+    rm -rf /tmp/rocm-libraries; \
     mkdir -p /var/jenkins/workspace/pytorch; \
     cp -r "$pt"/* /var/jenkins/workspace/pytorch/; \
     chown -R jenkins:jenkins /var/jenkins/workspace/pytorch; \
