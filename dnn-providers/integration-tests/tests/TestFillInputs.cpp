@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <set>
@@ -498,6 +499,66 @@ TEST(TestFillInputs, SdpaFwdBwdFusedSucceeds)
     const auto result = runFill(gr, {7, 8, 9});
 
     EXPECT_TRUE(result.filled) << result.reason;
+}
+
+// ── Block-scale dequantize ──────────────────────────────────────────────────
+// scale tensor is FREE+POWER_OF_TWO after reclassification; must fill, not skip.
+
+GraphResult buildBlockScaleDequantizeGraph()
+{
+    GraphResult r;
+    auto& b = r.builder;
+
+    std::vector<flatbuffers::Offset<TensorAttributes>> tensors;
+    tensors.push_back(CreateTensorAttributesDirect(b, 1, "x", DataType::FLOAT, &kStrides, &kDims));
+    tensors.push_back(
+        CreateTensorAttributesDirect(b, 2, "scale", DataType::FLOAT, &kStrides, &kDims));
+    tensors.push_back(CreateTensorAttributesDirect(b, 3, "y", DataType::FLOAT, &kStrides, &kDims));
+
+    std::vector<int32_t> blockSize = {32};
+    auto deq = CreateBlockScaleDequantizeAttributesDirect(b, 1, 2, 3, &blockSize);
+
+    std::vector<flatbuffers::Offset<Node>> nodes;
+    nodes.push_back(CreateNodeDirect(b,
+                                     "block_scale_deq",
+                                     DataType::FLOAT,
+                                     NodeAttributes::BlockScaleDequantizeAttributes,
+                                     deq.Union()));
+
+    auto graph = CreateGraphDirect(
+        b, "test", DataType::FLOAT, DataType::FLOAT, DataType::FLOAT, &tensors, &nodes);
+    b.Finish(graph);
+
+    r.graph = GetGraph(b.GetBufferPointer());
+    return r;
+}
+
+TEST(TestFillInputs, BlockScaleDequantizeFillsScaleAsPowerOfTwo)
+{
+    const auto gr = buildBlockScaleDequantizeGraph();
+    const std::vector<int64_t> leafUids = {1, 2};
+
+    auto inputs = makeTensorsFromGraph(gr, leafUids);
+    InputFillRecipes recipes;
+    const auto result = fillInputs(*gr.graph, inputs, leafUids, recipes);
+    ASSERT_TRUE(result.filled) << result.reason;
+
+    EXPECT_TRUE(recipes.unfilled(leafUids).empty());
+
+    const auto scaleRecipe = recipes.fill(2);
+    EXPECT_EQ(scaleRecipe.kind, FillRecipe::Kind::FREE);
+    EXPECT_EQ(scaleRecipe.distribution, FillRecipe::Distribution::POWER_OF_TWO);
+
+    const auto* tensor = inputs.at(2).get();
+    for(size_t i = 0; i < tensor->elementCount(); ++i)
+    {
+        const float v
+            = *static_cast<const float*>(tensor->hostDataOffsetFromIndex(static_cast<int64_t>(i)));
+        ASSERT_GT(v, 0.0f);
+        float exponent = std::log2(v);
+        EXPECT_FLOAT_EQ(exponent, std::round(exponent))
+            << "scale element " << i << " = " << v << " is not a power of two";
+    }
 }
 
 // NOLINTEND(readability-identifier-naming)

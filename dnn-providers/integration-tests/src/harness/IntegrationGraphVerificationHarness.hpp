@@ -430,10 +430,12 @@ protected:
         auto missing = _inputFillRecipes.unfilled(leafInputUids);
         if(!missing.empty())
         {
-            std::string msg = "unfilled inputs:";
+            std::string msg = "FILL_SKIP: unfilled inputs";
             for(const int64_t uid : missing)
             {
-                msg += " uid=" + std::to_string(uid);
+                const auto kind = _inputFillRecipes.fill(uid).kind;
+                msg += " uid=" + std::to_string(uid) + "("
+                       + (kind == FillRecipe::Kind::STRUCTURED ? "structured" : "derived") + ")";
             }
             return FillResult::unsupported(msg);
         }

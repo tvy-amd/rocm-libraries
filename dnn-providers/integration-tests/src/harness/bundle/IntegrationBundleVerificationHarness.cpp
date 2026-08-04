@@ -335,10 +335,12 @@ bool IntegrationBundleVerificationHarness::fillBundleInputs()
     if(!missing.empty())
     {
         std::ostringstream os;
-        os << "cannot fill:";
+        os << "FILL_SKIP: cannot fill";
         for(const int64_t uid : missing)
         {
-            os << " uid=" << uid;
+            const auto kind = _inputFillRecipes.fill(uid).kind;
+            os << " uid=" << uid << "("
+               << (kind == FillRecipe::Kind::STRUCTURED ? "structured" : "derived") << ")";
         }
         skipUnverifiable(os.str());
         return false;

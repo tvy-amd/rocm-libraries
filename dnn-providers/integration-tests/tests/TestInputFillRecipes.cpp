@@ -203,6 +203,34 @@ TEST(TestInputFillRecipes, ToJsonAndLoadFromJsonRoundTrip)
     EXPECT_EQ(loaded.resolveSeed(2), std::nullopt);
 }
 
+TEST(TestInputFillRecipes, DistributionPowerOfTwoRoundTrip)
+{
+    InputFillRecipes original;
+    original.set(1, FillRecipe::free(0.5f, 2.0f, FillRecipe::Distribution::POWER_OF_TWO));
+    original.set(2, FillRecipe::free(-1.0f, 1.0f));
+
+    const auto json = original.toJson();
+
+    std::unordered_map<int64_t, nlohmann::json> inputMap;
+    for(const auto& [key, val] : json.items())
+    {
+        inputMap[std::stoll(key)] = val;
+    }
+
+    InputFillRecipes loaded;
+    loaded.loadFromJson(inputMap);
+
+    const auto f1 = loaded.fill(1);
+    EXPECT_EQ(f1.kind, FillRecipe::Kind::FREE);
+    EXPECT_EQ(f1.distribution, FillRecipe::Distribution::POWER_OF_TWO);
+    EXPECT_FLOAT_EQ(f1.lo, 0.5f);
+    EXPECT_FLOAT_EQ(f1.hi, 2.0f);
+
+    const auto f2 = loaded.fill(2);
+    EXPECT_EQ(f2.kind, FillRecipe::Kind::FREE);
+    EXPECT_EQ(f2.distribution, FillRecipe::Distribution::UNIFORM);
+}
+
 TEST(TestInputFillRecipes, SeedOnlyTensorSurvivesRoundTrip)
 {
     InputFillRecipes original;

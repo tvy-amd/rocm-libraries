@@ -153,6 +153,10 @@ public:
             {
                 j["lo"] = fill.lo;
                 j["hi"] = fill.hi;
+                if(fill.distribution != FillRecipe::Distribution::UNIFORM)
+                {
+                    j["distribution"] = distributionToString(fill.distribution);
+                }
             }
             if(fill.kind == FillRecipe::Kind::FIXED)
             {
@@ -194,6 +198,10 @@ public:
                 if(j.contains("value") && j["value"].is_number())
                 {
                     f.value = j["value"].get<float>();
+                }
+                if(j.contains("distribution") && j["distribution"].is_string())
+                {
+                    f.distribution = distributionFromString(j["distribution"].get<std::string>());
                 }
                 set(uid, f);
             }
@@ -242,6 +250,27 @@ private:
             return FillRecipe::Kind::DERIVED;
         }
         return FillRecipe::Kind::FREE;
+    }
+
+    static const char* distributionToString(FillRecipe::Distribution d)
+    {
+        switch(d)
+        {
+        case FillRecipe::Distribution::POWER_OF_TWO:
+            return "power_of_two";
+        case FillRecipe::Distribution::UNIFORM:
+        default:
+            return "uniform";
+        }
+    }
+
+    static FillRecipe::Distribution distributionFromString(const std::string& s)
+    {
+        if(s == "power_of_two")
+        {
+            return FillRecipe::Distribution::POWER_OF_TWO;
+        }
+        return FillRecipe::Distribution::UNIFORM;
     }
 };
 

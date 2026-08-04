@@ -22,7 +22,20 @@ FillResult
     switch(recipe.kind)
     {
     case FillRecipe::Kind::FREE:
-        tensor.fillTensorWithRandomValues(recipe.lo, recipe.hi, seed);
+        switch(recipe.distribution)
+        {
+        case FillRecipe::Distribution::UNIFORM:
+            tensor.fillTensorWithRandomValues(recipe.lo, recipe.hi, seed);
+            break;
+        case FillRecipe::Distribution::POWER_OF_TWO:
+            if(recipe.lo <= 0.0f)
+            {
+                return FillResult::unsupported("POWER_OF_TWO requires lo > 0 (got "
+                                               + std::to_string(recipe.lo) + ")");
+            }
+            tensor.fillTensorWithRandomPowerOfTwoValues(recipe.lo, recipe.hi, seed);
+            break;
+        }
         return FillResult::ok();
     case FillRecipe::Kind::FIXED:
         tensor.fillTensorWithValue(recipe.value);
@@ -170,7 +183,8 @@ void setBlockScaleDequantizeInitDefaults(const hipdnn_flatbuffers_sdk::data_obje
     {
         return;
     }
-    recipes.setDefault(a->scale_tensor_uid(), FillRecipe::structured());
+    recipes.setDefault(a->scale_tensor_uid(),
+                       FillRecipe::free(0.5f, 2.0f, FillRecipe::Distribution::POWER_OF_TWO));
 }
 
 // ── SDPA ─────────────────────────────────────────────────────────────────────
